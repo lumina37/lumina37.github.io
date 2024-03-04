@@ -3,7 +3,7 @@
 ## Source: https://github.com/hexojs/hexo/
 
 # Site
-title: Blog
+title: Starry's Blog
 subtitle: '主打年更'
 description: '存放一些技术类文章'
 author: Starry
@@ -64,7 +64,7 @@ index_generator:
   order_by: -date
 
 # Category & Tag
-default_category: 默认
+default_category: default
 category_map:
 tag_map:
 
