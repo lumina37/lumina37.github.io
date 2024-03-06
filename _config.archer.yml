@@ -62,12 +62,12 @@ profile_links:
 
 # ========== Site ========== #
 # title of the site (good for SEO)
-SEO_title: Starry's Blog
+SEO_title: Starry's fat cat
 # keywords for site (good for SEO)
 SEO_keywords:
   - 技术博客
 # main title shown in header image
-main_title: Starry's Blog
+main_title: Starry's fat cat
 # subtitle
 subtitle:
 # site haeder image
