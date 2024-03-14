@@ -1,6 +1,6 @@
 ---
 title: 论文笔记：Automated Robust Metric Calibration Algorithm for 3D Camera Systems
-categories: 光场相机
+categories: Light Field
 date: 2024/3/2 14:44:00
 mathjax: true
 ---
