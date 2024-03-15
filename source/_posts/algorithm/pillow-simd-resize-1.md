@@ -7,7 +7,7 @@ mathjax: true
 
 ## 译者序
 
-项目要求写一个header-only的高性能图像缩放实现，遂打算写个专栏研究一下当前主流的开源图像缩放实现（OpenCV、pillow-simd等），顺带入门一下算法性能调优。
+项目要求写一个header-only的高性能图像缩放实现，目标是将任意大小图片缩小至8x8的大小，同时完成灰度化。我不论怎么改进都要比OpenCV-AVX2慢个三倍左右。遂打算写个专栏研究一下当前主流的开源图像缩放实现（OpenCV、pillow-simd等），顺带入门一下算法性能调优。
 
 这篇文章是[The Fastest Image Resize Part0](https://uploadcare.com/blog/the-fastest-image-resize)的DeepL机翻+人工复核。其作者Alex Karpinsky系[pillow-simd](https://github.com/uploadcare/pillow-simd)的开发者。
 
