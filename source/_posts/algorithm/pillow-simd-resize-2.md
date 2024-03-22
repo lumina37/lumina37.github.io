@@ -209,3 +209,164 @@ to 5478x3424 lzs      1.56232 s     2.62 Mpx/s    31.2 %
 
 第四列显示了性能改进情况。
 
+## 优化点2：更高效的取值截断
+
+在代码的某些部分，我们可以看到这样的结构：
+
+```
+if (ss < 0.5)
+  imOut->image[yy][xx*4+b] = (UINT8) 0;
+else if (ss >= 255.0)
+  imOut->image[yy][xx*4+b] = (UINT8) 255;
+else
+  imOut->image[yy][xx*4+b] = (UINT8) ss;
+```
+
+该代码段用于将像素值限制在[0, 255]的8位无符号整型范围内，以防计算结果溢出。出现这种情况的原因是，所有正卷积系数之和可能大于1，而所有负卷积系数之和可能小于0。因此，我们有时会偶然发现溢出。溢出是对锐利的亮度梯度进行补偿的结果，并不是错误。
+
+让我们来看看代码。有一个输入变量`ss`和一个输出`imOut -> image[yy]`。输出在多个地方被赋值。这里的问题是，我们在比较浮点数，而将数值转换为整数再进行比较会更有效。因此，这就是函数：
+
+```
+static inline UINT8
+clip8(float in) {
+  int out = (int) in;
+  if (out >= 255)
+     return 255;
+  if (out <= 0)
+      return 0;
+  return (UINT8) out;
+}
+```
+
+这次优化也提升了性能，这次是较平缓的提升，[commit 54d3b9d](https://github.com/uploadcare/pillow-simd/commit/54d3b9d7bc9971f01d4fc409d2bc4d60c185e778#diff-3f8dc1d8e4d89c526319ca16c9527bc9)：
+
+```
+Operation           Time         Bandwidth      Improvement
+-----------------------------------------------------------
+to 320x200 bil      0.04644 s    88.20 Mpx/s     2.5 %
+to 320x200 bic      0.08157 s    50.21 Mpx/s    10.0 %
+to 320x200 lzs      0.11131 s    36.80 Mpx/s     4.2 %
+to 2048x1280 bil    0.22348 s    18.33 Mpx/s     9.6 %
+to 2048x1280 bic    0.28599 s    14.32 Mpx/s     6.3 %
+to 2048x1280 lzs    0.35462 s    11.55 Mpx/s     5.2 %
+to 5478x3424 bil    0.94587 s     4.33 Mpx/s    12.4 %
+to 5478x3424 bic    1.18599 s     3.45 Mpx/s    11.6 %
+to 5478x3424 lzs    1.45088 s     2.82 Mpx/s     7.7 %
+```
+
+正如您所看到的，这种优化对窗口较小、输出分辨率较大的滤镜效果更好，只有320×200双线性滤镜例外。我没有研究为什么会出现这种情况。这是合理的，滤镜窗口越小，最终分辨率越大，我们的值约束方法对整体性能的贡献就越大。
+
+## 优化点3：循环展开
+
+如果我们再次查看水平处理（horizontal pass）的代码，就会发现有四个内循环：
+
+```
+for (yy = 0; yy < imOut->ysize; yy++) {
+  // ...
+  for (xx = 0; xx < imOut->xsize; xx++) {
+    // ...
+    for (b = 0; b < imIn->bands; b++) {
+      // ...
+      for (x = (int) xmin; x < (int) xmax; x++) {
+        ss = ss + (UINT8) imIn->image[yy][x*4+b] * k[x - (int) xmin];
+      }
+    }
+  }
+}
+```
+
+我们正在遍历输出图像的每一行和每一列：准确地说，是每一个像素。嵌入式循环的目的是遍历输入图像中需要卷积的每个像素。那么变量`b`呢？它的作用是遍历图像的通道（比如RGB就是三个通道）。很明显，由于Pillow表示图像的方式，通道的数量是相当固定的，不会超过四个。
+
+因此，有四种可能的情况，分别对应1-4通道图像。然后，我们添加分支以在不同模式间切换。下面是最常见的三通道图像的代码：
+
+```
+for (xx = 0; xx < imOut->xsize; xx++) {
+  if (imIn->bands == 4) {
+    // Body, 4-band images
+  } else if (imIn->bands == 3) {
+    ss0 = 0.0;
+    ss1 = 0.0;
+    ss2 = 0.0;
+    for (x = (int) xmin; x < (int) xmax; x++) {
+      ss0 = ss0 + (UINT8) imIn->image[yy][x*4+0] * k[x - (int) xmin];
+      ss1 = ss1 + (UINT8) imIn->image[yy][x*4+1] * k[x - (int) xmin];
+      ss2 = ss2 + (UINT8) imIn->image[yy][x*4+2] * k[x - (int) xmin];
+    }
+    ss0 = ss0 * ww + 0.5;
+    ss1 = ss1 * ww + 0.5;
+    ss2 = ss2 * ww + 0.5;
+    imOut->image[yy][xx*4+0] = clip8(ss0);
+    imOut->image[yy][xx*4+1] = clip8(ss1);
+    imOut->image[yy][xx*4+2] = clip8(ss2);
+  } else {
+    // Body, 1- and 2-band images
+  }
+}
+```
+
+（这里我有个疑惑，明明是三通道图像，为何会以4字节为步长遍历源图像？我猜测Pillow统一使用了四通道表示，即把RBG图像看作屏蔽了A通道的RGBA格式，好处是更方便SIMD处理，坏处是内存消耗增加。希望懂Pillow的大佬能在评论区解答一下疑惑。我后续也会阅读一下源码看看猜得对不对。）
+
+我们还可以更进一步，把分支再拆开，拆成 xx 的循环：
+
+```
+if (imIn->bands == 4) {
+  for (xx = 0; xx < imOut->xsize; xx++) {
+    // Body, 4 channels
+  }
+} else if (imIn->bands == 3) {
+  for (xx = 0; xx < imOut->xsize; xx++) {
+    // Body, 3 channels
+  }
+} else {
+  for (xx = 0; xx < imOut->xsize; xx++) {
+    // Body, 1 and 2 channels
+  }
+}
+```
+
+以下是我们在[commit 95a9e30](https://github.com/uploadcare/pillow-simd/commit/95a9e3009df1ccdd5088ea7560860c953d2ed94d#diff-3f8dc1d8e4d89c526319ca16c9527bc9)中获得的性能改进：
+
+```
+Operation           Time         Bandwidth      Improvement
+-----------------------------------------------------------
+to 320x200 bil      0.03885 s   105.43 Mpx/s    19.5 %
+to 320x200 bic      0.05923 s    69.15 Mpx/s    37.7 %
+to 320x200 lzs      0.09176 s    44.64 Mpx/s    21.3 %
+to 2048x1280 bil    0.19679 s    20.81 Mpx/s    13.6 %
+to 2048x1280 bic    0.24257 s    16.89 Mpx/s    17.9 %
+to 2048x1280 lzs    0.30501 s    13.43 Mpx/s    16.3 %
+to 5478x3424 bil    0.88552 s     4.63 Mpx/s     6.8 %
+to 5478x3424 bic    1.08753 s     3.77 Mpx/s     9.1 %
+to 5478x3424 lzs    1.32788 s     3.08 Mpx/s     9.3 %
+```
+
+垂直方向上也可以找到类似的代码。以下是性能较差的初版代码：
+
+```
+for (xx = 0; xx < imOut->xsize*4; xx++) {
+  /* FIXME: skip over unused pixels */
+  ss = 0.0;
+  for (y = (int) ymin; y < (int) ymax; y++)
+    ss = ss + (UINT8) imIn->image[y][xx] * k[y-(int) ymin];
+  ss = ss * ww + 0.5;
+  imOut->image[yy][xx] = clip8(ss);
+}
+```
+
+这里没有基于通道的迭代。相反，无论图像中有多少通道，xx都会遍历所有的四个通道（RGB不是三个通道吗？为什么这里会提到四个通道？如果读者对这一点有疑问可以看看我前面针对通道数问题给出的译注）。注释中的FIXME与此修复相关。我们也在做同样的事情：添加分支语句以根据输入图像的通道数切换实现。代码可以在[commit f227c35](https://github.com/uploadcare/pillow-simd/commit/f227c3532e81569e2b9f195558fd897f9e91d95e#diff-3f8dc1d8e4d89c526319ca16c9527bc9)中找到，以下是结果：
+
+```
+Operation           Time         Bandwidth      Improvement
+-----------------------------------------------------------
+to 320x200 bil      0.03336 s   122.80 Mpx/s    16.5 %
+to 320x200 bic      0.05439 s    75.31 Mpx/s     8.9 %
+to 320x200 lzs      0.08317 s    49.25 Mpx/s    10.3 %
+to 2048x1280 bil    0.16310 s    25.11 Mpx/s    20.7 %
+to 2048x1280 bic    0.19669 s    20.82 Mpx/s    23.3 %
+to 2048x1280 lzs    0.24614 s    16.64 Mpx/s    23.9 %
+to 5478x3424 bil    0.65588 s     6.25 Mpx/s    35.0 %
+to 5478x3424 bic    0.80276 s     5.10 Mpx/s    35.5 %
+to 5478x3424 lzs    0.96007 s     4.27 Mpx/s    38.3 %
+```
+
+我想强调的是，水平处理的优化为图像缩小提供了更好的性能，而垂直处理则为放大提供了更好的性能。
