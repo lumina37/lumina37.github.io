@@ -1,5 +1,5 @@
 ---
-title: 高性能图像缩放：Pillow-SIMD resize [1]
+title: 高性能图像缩放：Pillow resize [1]
 categories: Algorithm
 date: 2024/3/15 10:10:00
 mathjax: true
@@ -9,7 +9,7 @@ mathjax: true
 
 项目要求写一个header-only的高性能图像缩放实现，目标是将任意大小图片缩小至8x8的大小，同时完成灰度化。我不论怎么改进都要比OpenCV-AVX2慢个三倍左右。遂打算写个专栏研究一下当前主流的开源图像缩放实现（OpenCV、pillow-simd等），顺带入门一下算法性能调优。
 
-这篇文章是[The Fastest Image Resize Part0](https://uploadcare.com/blog/the-fastest-image-resize)的DeepL机翻+人工复核。如有翻译问题可在评论区指出。其作者Alex Karpinsky系[pillow-simd](https://github.com/uploadcare/pillow-simd)的开发者。
+这篇文章是[The Fastest Image Resize Part0](https://uploadcare.com/blog/the-fastest-image-resize)的DeepL机翻+人工复核。如有翻译问题可在评论区指出。其作者Alex Karpinsky系[Pillow-Simd](https://github.com/uploadcare/pillow-simd)的开发者。
 
 ## 前言
 
@@ -119,4 +119,4 @@ to 5478x3424 lzs      2.04901 s     2.00 MP/s
 
 另一件让我感到高兴的事情是，Pillow和Pillow-SIMD是真实存在的。它们是任何开发人员都能使用的可投入生产的库。这不仅仅是在Stack Overflow上发布的一些代码，也不仅仅是一些“基本元素”，它们应该像构建工具包一样连接起来才能工作。它甚至不是一个界面阴暗、编译时间长达30分钟的复杂C++库（OpenCV：勿cue）。只需三行命令：安装、导入、加载......砰！“嘿，妈妈，看，我在我的应用程序中使用了世界上最快的图像缩放！”
 
-在下一篇文章中，您将与我一起继续这场优化之旅。
+在[下一篇文章](../pillow-resize-1)中，您将与我一起继续这场优化之旅。
