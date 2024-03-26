@@ -1,6 +1,6 @@
 # ========== Profile ========== #
 # avatar
-avatar: /avatar/97806575_p0.png
+avatar: https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/portrait_1M.jpg
 # author name
 author: Starry
 # signature
@@ -71,9 +71,9 @@ main_title: Starry's fat cat
 # subtitle
 subtitle:
 # site haeder image
-site_header_image: "/intro/bg.jpg"
+site_header_image: "https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/himinil_1080p.jpg"
 # post haeder image
-post_header_image: "/intro/bg.jpg"
+post_header_image: "https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/himinil_1080p.jpg"
 # 404 image
 _404_image: "/intro/404-bg.jpg"
 
