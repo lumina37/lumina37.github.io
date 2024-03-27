@@ -1,5 +1,5 @@
 ---
-title: 高性能图像缩放：Pillow resize [2]
+title: 高性能图像缩放：Pillow-SIMD resize [2]
 categories: Algorithm
 date: 2024/3/17 14:35:00
 mathjax: true
@@ -7,13 +7,13 @@ mathjax: true
 
 ## 译者序
 
-这篇文章是[The fastest production-ready image resize out there. Part 1. General optimizations](https://uploadcare.com/blog/the-fastest-production-ready-image-resize/)的DeepL机翻+人工复核。如有翻译问题可在评论区指出。其作者Alex Karpinsky系[Pillow-Simd](https://github.com/uploadcare/pillow-simd)的开发者。
+这篇文章是[The fastest production-ready image resize out there. Part 1. General optimizations](https://uploadcare.com/blog/the-fastest-production-ready-image-resize/)的DeepL机翻+人工复核。如有翻译问题可在评论区指出。其作者Alex Karpinsky系[Pillow-SIMD](https://github.com/uploadcare/pillow-simd)的开发者。
 
 上一篇的翻译[在这](../pillow-resize-1)。
 
 ## 前言
 
-在此前的[介绍性文章](https://uploadcare.com/blog/the-fastest-image-resize/)（对应的[中译版](../pillow-resize-1)）中，我对图像缩放的挑战进行了全面总结。结果发现这个故事相当长，而且有点半生不熟：它没有包含一行代码。
+在此前的[介绍性文章](https://uploadcare.com/blog/the-fastest-image-resize/)中，我对图像缩放的挑战进行了全面总结。结果发现这个故事相当长，而且有点半生不熟：它没有包含一行代码。
 
 不过，如果没有前面的总结，就很难谈及具体的优化方法。当然，我们可以将一些技术应用到手头的任何代码中。例如，缓存计算或减少分支。但我认为，如果没有对所处理问题的整体理解，就无法完成某些事情。这就是活人与编译器自动优化的区别。这也是为什么人工优化仍然起着至关重要的作用：**编译器处理代码，人类处理问题**。编译器无法判断一个数字是否具有足够的随机性，而人类却可以。
 

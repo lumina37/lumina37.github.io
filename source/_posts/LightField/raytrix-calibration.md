@@ -1,6 +1,6 @@
 ---
 title: 论文笔记：Automated Robust Metric Calibration Algorithm for 3D Camera Systems
-categories: Light Field
+categories: LightField
 date: 2024/3/2 14:44:00
 mathjax: true
 ---
@@ -25,9 +25,9 @@ mathjax: true
 
 第一段简要介绍了一下光场相机的发展历程。
 
-第二段提到Raytrix以“虚深度”（Virtual Depth）的形式提供物到相机的距离。并且引用[10](https://www.researchgate.net/publication/258713151_Single_Lens_3D-Camera_with_Extended_Depth-of-Field)详细讲解了Raytrix相机。虚深度的概念会在后面图解，你可以暂时把它理解为一个变量与随相机型号变化的常量的比值。
+第二段提到Raytrix以“虚深度”（Virtual Depth）的形式提供物到相机的距离。并且引用[10](https://www.researchgate.net/publication/258713151_Single_Lens_3D-Camera_with_Extended_Depth-of-Field)详细讲解了Raytrix相机。虚深度的概念会在后面图解，你可以暂时把它理解为一个变量与另一个随相机型号变化的常量的比值。
 
-第三四段简要介绍了先前提出的光场标定算法。
+第三、四段简要介绍了先前提出的光场标定算法。
 
 第五段，作者声明这个新提出的标定算法更精确地建模了MLA（Micro Lens Array，微透镜阵列），由此不仅可以更准确地度量三维空间，更可以减少深度图中的噪声。
 
