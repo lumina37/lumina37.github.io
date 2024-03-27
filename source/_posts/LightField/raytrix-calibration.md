@@ -41,27 +41,25 @@ mathjax: true
 
 ### Depth estimation
 
-（这里我怀疑作者放错图了，下图应当是散焦式全光相机的成像图，而Plenoptic 2.0是聚焦式的，佐证可见[此处](https://www.researchgate.net/publication/241391634_Resolution_in_Plenoptic_Cameras/figures?lo=1)）
+下图是Plenoptic 2.0（聚焦式全光相机）的成像示意图。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="散焦式全光相机成像示意图">
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="聚焦式全光相机成像示意图">
 
-上图中穿过主透镜和MLA的光最终汇聚于TCP（Total Covering Plane）。传感器（Sensor）必须置于TCP前，这样各个ML在传感器上呈的像才是一个个小圆像。如果放在TCP上那就直接成点了。这些小圆像被称作MI（Microlens Image）。相邻的MI存在部分相似，这是因为它们都是对同一物体在不同角度的观察。我们可以进一步利用这些相似区域做深度估计。
+上图中，Image是仅有主透镜无MLA的成像位置。MLA将光线会聚的位置“提前”到了TCP（Total Covering Plane，不知道怎么翻译）所在的位置。我们在MLA之后，TCP的附近放置传感器，这样每个ML都会在传感器上成一个小圆像。这些小圆像被称作MI（Microlens Image）。相邻的MI存在部分相似，这是因为物体上同一块区域发出的光可以由紧邻的多个ML成像，相邻的MI包含了物上的同一区域，自然也就存在相似性了。我们可以进一步利用这些相似区域之间的距离关系估算深度。
 
 <img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-002.jpg" alt="深度估计示意图" width="50%">
 
-这一小节的终极目标就是算出$P_V$点“到相机的距离”$a$，也就是到MLA[主平面](https://zh.wikipedia.org/zh-cn/%E5%9F%BA%E9%BB%9E)的距离。
+如上图所示，由物上一点发出的三条特殊光线，恰好经过三个ML（Micro Len，微透镜）的中心点，打在成像平面上的$i_1$、$i_2$和$i_3$三点，最终会聚于$P_V$点。因为光线恰好穿过ML中心，因此并未发生偏折，$P_V$其实就是主透镜的焦点。而所谓成像平面其实就是ML的焦平面。中三个ML的中心点分别记作$c_1$、$c_2$和$c_3$。图中的$D$是相邻ML的中心距离。$a$是$P_V$点“到相机的距离”$a$，也就是到MLA[主平面](https://zh.wikipedia.org/zh-cn/%E5%9F%BA%E9%BB%9E)的距离。$b$是成像平面（注意成像平面≠传感器）到MLA主平面的距离，并且是一个常量，但我们通常并不能直接得知，**所谓标定，终极目标就是把这个$b$标定出来**。
 
-计算$a$之前要先计算$P_V$点的虚深度$v$。我们需要先知道物体上某一点在两个相邻MI中的位置，如上图分别记作$i_1$和$i_2$。这两个MI对应的ML（Micro Len，微透镜）的投影中心（投影到垂直光轴的虚线上）记为$c_1$和$c_2$。既然知道了传感器上对应物体上同一点的两条光路，我们就可以用几何模型计算出虚深度$v$。
-
-上图中$b$是$P_V$和传感器到MLA主平面的距离，$D$是相邻ML的中心距离。虚深度的计算公式如下：
+计算$b$之前要先计算$P_V$点的虚深度$v$。虚深度的计算公式如下：
 
 $$v = \frac{a}{b} = \frac{D}{D-(i_1-i_2)}$$
 
-Raytrix相机还有一个多焦点（Multi-Focus）的特性，即在相机的MLA中存在三种不同焦距的ML。该特性使得相机能获得更大的景深（DoF，Depth of Field），但也会造成一种特殊的“偏差”（aberration），如下图所示，即测量出三种不同的焦平面。
+Raytrix相机还有一个多焦点（Multi-Focus）的特性，即在相机的MLA中存在三种不同焦距的ML。该特性使得相机能获得更大的景深（DoF，Depth of Field），但也会造成一种特殊的“偏差”（aberration），如下图所示，即测量出三种不同的成像平面。
 
 <img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-003.jpg" alt="存在多种焦距的ML导致的测量偏差">
 
-因为焦平面到MLA主平面的距离与虚深度线性相关，由此我们可以假定对不同的ML有不同的$b$（传感器到MLA主平面的距离）。并用$b_i$表示第$i$种ML对应的$b$。
+因为成像平面到MLA主平面的距离与虚深度线性相关，由此我们可以假定对不同的ML有不同的$b$，并用$b_i$表示第$i$种ML对应的$b$。
 
 ### Projection model
 
@@ -69,7 +67,7 @@ Raytrix相机还有一个多焦点（Multi-Focus）的特性，即在相机的ML
 
 <img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-004.jpg" alt="从虚深度到真实深度的投影转换示意图">
 
-空间Ⅰ中的点由“横向”（这里指的是垂直主光轴的方向，搞不懂为什么要叫lateral）的坐标再加上虚深度来表示。空间Ⅱ中的点是由空间Ⅰ投影而来的真实坐标，相当于去除了MLA的作用。空间Ⅲ的点为去变形（undistorted）之后，位于主透镜焦平面上的点。空间Ⅳ的点为对应的真实物体上的点，也反映了真实深度。这些点的$x$、$y$坐标轴与主光轴垂直，$z$坐标轴与主光轴平行。感觉原始概念有些难以理解，还是来看公式吧。
+空间Ⅰ中的点由“横向”（这里指的是垂直于主光轴的方向，搞不懂为什么要叫lateral）的坐标再加上虚深度来表示。空间Ⅱ中的点是由空间Ⅰ投影而来的真实坐标，其实就对应了$P_V$的坐标。空间Ⅲ的点为去变形（undistorted）之后的点。去变形的效果就相当于把主透镜摆正。空间Ⅳ的点为对应的真实物体上的点，也反映了真实深度。这些点的$x$、$y$坐标轴与主光轴垂直，$z$坐标轴与主光轴平行。感觉原始概念有些难以理解，还是来看公式吧。
 
 由于虚深度对应了空间Ⅰ中的坐标$(x,y,z)_Ⅰ$，因此我们可以利用公式$v = \frac{a}{b_i}$投影得到空间Ⅱ中的坐标$(x,y,z)_Ⅱ$：
 
@@ -104,11 +102,11 @@ $$z_Ⅲ' = z_Ⅱ + (1 + z_d d_d) \cdot (d_1 r^2 + d_2 r^4)$$
 
 $$B_L = \frac{T_L}{2} \left( 1 - \sqrt{1 - 4 \frac{f_L}{T_L}} \right)$$
 
-其中$f_L$是主透镜的焦距，$T_L$为主透镜的对焦距离。这里各种距离的概念有点多，为方便读者理解我把上面的那张成像示意图再贴一遍。
+其中$f_L$是主透镜的焦距，$T_L$为主透镜的对焦距离（焦点到被摄物体的距离？）。这里各种距离的概念有点多，为方便读者理解我把上面的那张成像示意图再贴一遍。
 
 <img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="散焦式全光相机成像示意图">
 
-现在，只需要把从MLA起算的深度$z_Ⅲ'$与主透镜到TCP的距离$B_L$加起来，再减去MLA到TCP的距离就能得到从主透镜起算的深度，亦即空间Ⅲ中的深度$z_Ⅲ$了。而根据光场相机的设计理论，TCP到传感器的距离恰好等于传感器与MLA之间的间距$b_i$。于是我们可以写出$z_Ⅲ$的表达式：
+现在，只需要把从MLA起算的深度$z_Ⅲ'$与主透镜到TCP的距离$B_L$加起来，再减去MLA到TCP的距离就能得到从主透镜起算的深度，亦即空间Ⅲ中的深度$z_Ⅲ$了。而根据光场相机的设计理论，TCP到传感器的距离恰好等于传感器与MLA之间的间距$b_i$（$b_i$不是随透镜类型变化的吗？而传感器与MLA之间的间距似乎是个固定值？这里我没读懂。）。于是我们可以写出$z_Ⅲ$的表达式：
 
 $$z_Ⅲ = z_Ⅲ' + B_L - 2b_i$$
 
