@@ -6,52 +6,49 @@ date: 2023/2/9 19:23:00
 
 ## 工具
 
-### 格式化
-
-[**black**](https://github.com/psf/black)
-
-极少的参数自由度，突出一个核心思想——好看的代码千篇一律，与其浪费那么多生命去纠结这啊那的，不如都来听我的。
-
-附上本人使用的`pyproject.toml`配置参数：
-
-```toml
-[tool.black]
-line-length = 120
-skip-string-normalization = true
-```
-
-VSCode格式化快捷键*Ctrl+Shift+F*
-
-### 静态分析与修复
+### 静态分析、修复与代码格式化
 
 [**ruff**](https://github.com/astral-sh/ruff)
 
-使用Rust实现的针对Python的静态分析与修复工具。一大批双修大神在积极地维护ruff并推进新特性。特点是支持海量规则，完全可以作为`isort`、`pylint`等工具的替代品。而且ruff的速度快得离谱。
+使用Rust实现的针对Python的静态分析与修复工具。一大批双修大神在积极地维护ruff并推进新特性。特点是支持海量规则。截止至本文最后一次更新时，ruff已经可以完全替代isort（对导入包排序）、pylint（静态检查）和black（代码格式化）。并且它的速度快得离谱。
 
 附上本人使用的`pyproject.toml`配置参数：
 
 ```toml
 [tool.ruff]
 line-length = 120
-target-version = "py38"
+target-version = "py310"
+
+[tool.ruff.format]
+quote-style = "preserve"
 
 [tool.ruff.lint]
-select = ["W", "E", "F", "I"]
+select = ["W", "E", "F", "I", "UP", "YTT", "A", "B", "C4", "PIE", "PT", "PERF", "FURB"]
 ignore = ["E402", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 ```
 
-推荐在VSCode中将排序imports（`ruff.exceuteOrganizeImports`，和isort的功能一致）的快捷键设置为*Ctrl+Shift+E*
+将ruff设置为VSCode Python格式化工具后就可以使用快捷键*Ctrl+Shift+F*一键格式化了。
+
+并且我还推荐在VSCode中将排序imports（`ruff.exceuteOrganizeImports`，和isort的功能一致）的快捷键设置为*Ctrl+Shift+E*，方便一键排序快速治疗强迫症。
 
 ### 包管理
 
-[**pdm**](https://github.com/pdm-project/pdm)
+我对包管理工具的体验并不算多，欢迎深度玩家拍砖。更详细的对比可以参考[这篇文章](https://zhuanlan.zhihu.com/p/681222081)。
 
-仍在积极更新的次世代包管理工具。虽然目前相对直接竞品[poetry](https://github.com/python-poetry/poetry)而言优势不大，对混合语言扩展的Debug版本的构建、安装与调试的支持依然平凡，用户生态相对薄弱，有时还会有些奇异的bug，但作者开发插件系统的想法以及对[pep-582](https://peps.python.org/pep-0582) (我称之为venv promax) 的支持可以说是“战未来”的首选。
+目前用户较多的现代包管理工具有以下三个，[**rye**](https://github.com/astral-sh/rye)、[**pdm**](https://github.com/pdm-project/pdm)和[**poetry**](https://github.com/python-poetry/poetry)。
 
-另外不得不说pdm换镜像源的方法比poetry方便很多，加大分。
+三者的第一个主要区别是，rye不会构建与平台无关的lock文件，而pdm和poetry会。因此rye的lock速度非常快，而pdm和poetry因为要构建各平台通用的lock，速度自然要慢得多。平台无关的lock文件似乎能让用户更好地掌控跨平台开发时的环境一致性，但我感觉这操作意义不大。与其用hash来锁定版本不如充分信任包作者和PyPI源。
+
+第二个区别是，poetry不支持[PEP-621 - Storing project metadata in pyproject.toml](https://peps.python.org/pep-0621/)，即在pyproject.toml中定义所有项目信息。这个[issue](https://github.com/python-poetry/roadmap/issues/3)自从2021年10月提出，到24年3月的[第三方PR](https://github.com/python-poetry/poetry/pull/9135)（截止发稿仍处于测试阶段）开启，整整三年未能得到修复。因此我强烈不推荐使用poetry。
+
+第三个较小的区别是，rye支持纯脚本形式的项目，即项目中不存在一个libabcd那样的包文件夹。只需要在pyproject.toml中配置`[tool.rye] virtual = true`即可。
+
+第四个较小的区别是，pdm换镜像源非常方便（国人作者深知国内用户痛点），命令行即可搞定。而rye和poetry都需要手动修改配置文件。
+
+我目前更倾向于使用rye，因为它真的是太快了。而且rye内部集成了ruff，二者都是同一家公司在维护，可能更有利于工具链的稳定。
 
 ### 基于CMake的混合语言构建
 
@@ -59,7 +56,7 @@ ignore = ["E402", "E501"]
 
 虽然截止2023年10月该仓库只有97个star，但它绝对是目前最先进的Python混合语言构建工具。
 
-相对于姊妹[scikit-build](https://github.com/scikit-build/scikit-build)，它完全摒弃了以setup.py为主CMakeLists.txt为辅的思路，转为完全在CMakeLists.txt中定义Py扩展库的构建流程，从而可以为IDE的各种静态分析工具提供更好的兼容性，也更遵从[pep-621](https://peps.python.org/pep-0621) (把所有元数据扔进pyproject.toml) 的思路。
+相对于姊妹[scikit-build](https://github.com/scikit-build/scikit-build)，它完全摒弃了以setup.py为主CMakeLists.txt为辅的思路，转为完全在CMakeLists.txt中定义Py扩展库的构建流程，从而可以为IDE的各种静态分析工具提供更好的兼容性，也更遵从[PEP-621](https://peps.python.org/pep-0621) (把所有元数据扔进pyproject.toml) 的思路。
 
 我还为这个工具写了一个[demo project](https://github.com/Starry-OvO/py-cffi-bridge-npy-and-ocv-demo)。
 
