@@ -35,7 +35,7 @@ mathjax: true
 
 各参数对应的物理含义如下图所示。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/00-ll-structure.png" alt="00-ll-structure" />
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/00-ll-structure.png" alt="00-ll-structure" />
 
 第一步，获取四个角上的MI的坐标$(x_i,y_i), \ i=1,2,3,4$。
 
@@ -55,11 +55,11 @@ mathjax: true
 
 首先，通过下图所示的左上、右上、左下、右下和当前MI这五个位置计算亮度衰减曲线。其中中心MI应当为纯色。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/10-selection.jpg" alt="10-selection" />
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/10-selection.jpg" alt="10-selection" />
 
 下图为亮度衰减曲线。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/20-decay-curve.png" alt="20-decay-curve" />
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/20-decay-curve.png" alt="20-decay-curve" />
 
 选取衰减速率最小的（shallowest）的一条曲线，并使用一次函数（疑似）拟合其衰减部分。然后我就看不懂了，为什么亮度衰减可以只出现在图像的一半区域？为什么需要分别计算起始斜率和终止斜率？
 
@@ -71,11 +71,11 @@ mathjax: true
 
 文中Main Lens Image意为主透镜所成实像。下图展示了主透镜实像经过微透镜阵列在传感器上成像的过程。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/30-imaging.png" alt="30-imaging" />
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/30-imaging.png" alt="30-imaging" />
 
 主透镜实像上的同一点在传感器上的距离记作$md$（matching distance，如下图所示）。$ps$即patch大小（patch size），$D$为各个patch在主透镜实像上对应的大小。并且二者存在几何关系$ps=sD/t$。只要按照正确的$ps$取出这些patch再将它们缩放至大小$D$并拼合，我们就能无缝地还原主透镜图像。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/40-md.jpg" alt="40-md" />
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/40-md.jpg" alt="40-md" />
 
 计算patch size的流程如下：
 
@@ -83,7 +83,7 @@ mathjax: true
 
 第二步，确定如下图所示的大小为$2X \times 2Y$的最大边缘搜索区域（maximum edge search area）。这个图比较抽象，是上中下三个MI叠在一起的效果，其中edge search area来自中间MI，其余两个关联边缘区域（corresponding edge area）分别来自上下两个MI。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/50-edge-search-area.png" alt="50-edge-search-area" />
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/50-edge-search-area.png" alt="50-edge-search-area" />
 
 然后就是让我比较懵逼的一句话：“由于MI中的补丁尺寸是共通的，因此在计算匹配误差时采用了最陡的边缘，这样既减少了补丁尺寸的搜索，又提高了补丁尺寸的可靠性。在选择最小误差进行立体匹配时，该边缘必须包含在三个连接的小透镜中。”虽然不完全理解这么做的理由，但作者这里应该是想用【同时出现在相邻三个MI中的那个最陡的边缘】来计算$md$。
 
@@ -104,6 +104,24 @@ TODO：补充这一小节。其实按原本的MI位置拼贴就行。
 ## m57813 - Conversion of Multi-Focused Plenoptic 2.0 Lenslet Image to Multiview Image
 
 [文章链接](https://dms.mpeg.expert/doc_end_user/current_document.php?id=80273)
+
+该提案以m57272为基础，引入json格式的配置文件，并减少了输入参数。
+
+步骤划分和57272基本一致。
+
+读标定数据并确定lenslet结构这一步，新提案减少了参数量。
+
+估计patch尺寸这一步，新提案添加了一个额外的前置步骤，用高斯模糊减少原图中的高频噪声。
+
+亮度补偿的步骤被删除，因为从主透镜虚像成像时MI边缘会变得更亮，而从主透镜实像成像时MI边缘会更暗。主透镜实像虚像的区别如下图所示。
+
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/60-ml-real.png" alt="60-ml-real" />
+
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/70-ml-virtual.png" alt="70-ml-virtual" />
+
+作者认为兼顾这两种情况的补偿方案太复杂，就干脆只从直径70%的区域提取多视角，亮度异常的区域舍弃不用。
+
+TODO：后面的边缘特征匹配相比m57272有所改进，但依然很复杂，我一时间看不懂遂跳过。
 
 ## Multiview from micro-lens image of multi-focused plenoptic camera
 
