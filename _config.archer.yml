@@ -2,7 +2,7 @@
 # avatar
 avatar: https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/Marcus.png
 # author name
-author: Starry
+author: Lumina
 # signature
 signature: 永远怀着一颗学徒的心
 # SNS (you can custom the order)
@@ -62,12 +62,12 @@ profile_links:
 
 # ========== Site ========== #
 # title of the site (good for SEO)
-SEO_title: Starry's fat cat
+SEO_title: Lumina's fat cat
 # keywords for site (good for SEO)
 SEO_keywords:
   - 技术博客
 # main title shown in header image
-main_title: Starry's fat cat
+main_title: Lumina's fat cat
 # subtitle
 subtitle:
 # site haeder image

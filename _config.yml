@@ -3,16 +3,16 @@
 ## Source: https://github.com/hexojs/hexo/
 
 # Site
-title: Starry's fat cat
+title: Lumina's fat cat
 subtitle:
 description:
-author: Starry
+author: Lumina
 language: zh-CN
 timezone: 'Asia/Shanghai'
 
 # URL
 ## Set your site url here. For example, if you use GitHub Page, set url as 'https://username.github.io/project'
-url: https://starry-ovo.top
+url: https://lumina.icu
 permalink: /:category/:name/
 permalink_defaults:
 pretty_urls:
