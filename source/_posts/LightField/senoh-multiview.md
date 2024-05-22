@@ -126,8 +126,3 @@ TODO：后面的边缘特征匹配相比m57272有所改进，但依然很复杂�
 ## Multiview from micro-lens image of multi-focused plenoptic camera
 
 [文章链接](https://ieeexplore.ieee.org/document/9687243)
-
-## m58745 - Wide-Viewing-Zone-Angle Multiview Conversion from Plenoptic 2.0 Lenslet Image
-
-[文章链接](https://dms.mpeg.expert/doc_end_user/current_document.php?id=81475)
-
