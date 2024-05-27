@@ -95,11 +95,13 @@ $$Y = 2/3 \left( sR - D_{max} \right) / 3$$
 
 有了$Y$，搜索区域的宽$X$可直接利用勾股定理求得。
 
-第三步，计算梯度图并平滑。TODO：补充第三步后续和四、五步。整那么多花里胡哨的，为了写篇文章也是不容易。
+第三步，计算梯度权重图；第四步，估计patch大小。作者认为，梯度$s$越大的区域，纹理可信度越高；纹理越可信，匹配失误所导致的惩罚（$W_s$乘上那一堆DDD的东西）就越大；惩罚越大，接受当前patch尺寸的估计结果所需要的cost就越大。如果【当前帧中某个MI的patch大小的估计结果所对应的cost】大于【前一帧同一位置MI的cost】，则拒绝当前的估计结果，沿用之前的patch大小。除了针对各个MI计算局部cost，作者还会计算一个全局cost。如果全局cost过高，则一次性拒绝当前帧下所有的估计结果，转而采用上一帧的估计结果。
+
+而“匹配失误”是通过当前MI的patch大小与周围MI的patch大小作差得到。m57813中改进了这个量化策略。
 
 ### Multi-view Conversion
 
-TODO：补充这一小节。其实按原本的MI位置拼贴就行。
+按原本的MI位置拼贴就行。作者这里还做了一个很复杂的亚像素插值，我感觉1/4像素精度就很可以了。
 
 ## m57813 - Conversion of Multi-Focused Plenoptic 2.0 Lenslet Image to Multiview Image
 
@@ -107,7 +109,7 @@ TODO：补充这一小节。其实按原本的MI位置拼贴就行。
 
 该提案以m57272为基础，引入json格式的配置文件，并减少了输入参数。
 
-步骤划分和57272基本一致。
+步骤划分和m57272基本一致。
 
 读标定数据并确定lenslet结构这一步，新提案减少了参数量。
 
@@ -121,8 +123,12 @@ TODO：补充这一小节。其实按原本的MI位置拼贴就行。
 
 作者认为兼顾这两种情况的补偿方案太复杂，就干脆只从直径70%的区域提取多视角，亮度异常的区域舍弃不用。
 
-TODO：后面的边缘特征匹配相比m57272有所改进，但依然很复杂，我一时间看不懂遂跳过。
+后续，作者还优化了匹配失误的度量步骤，使用当前MI中的待匹配区域（3x3大小）与周围MI中的对应区域作差，差值越大则匹配失误越大，如下图所示：
+
+<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2405_senoh-multiview/80-error.png" alt="80-error" />
 
 ## Multiview from micro-lens image of multi-focused plenoptic camera
 
 [文章链接](https://ieeexplore.ieee.org/document/9687243)
+
+是m57813的精简版，跳过。
