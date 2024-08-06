@@ -37,7 +37,7 @@ mathjax: true
 
 ## Theoretical Foundations
 
-这一大章都在讲理论基础。因为我也刚入门，所以就全篇翻译一下。
+这一大章都在讲理论基础。因为我也刚入门，所以就除了实验结果外全篇翻译一下。
 
 ### Depth estimation
 
@@ -127,33 +127,3 @@ $$\frac{1}{f_L} = \frac{1}{G_L} + \frac{1}{B_L}$$
 利用上一章中提到的方法，使用一组初始内参将目标点集投影到空间Ⅳ中。如果内参取值恰当，那么投影后的目标点应当与其实际所在的位置重合。而这一实际位置可由$z_Ⅳ=0$平面上的模型点集经过一仿射变换表示。为计算归一化的损失，不妨对目标点集施加一个仿射逆变换，使其变换到$z_Ⅳ=0$平面上，再利用变换后的目标点与模型点之间的距离来计算归一化损失。
 
 最后一段大意是提供的样本越多，用于优化参数的方程组就越超定，所以这套标定算法是相当健壮的。
-
-## Results
-
-第一段纯车轱辘话，跳过。
-
-为了评估目标点识别及与对应模型点匹配的效果，作者使用了由Raytrix相机拍摄的真实世界图像。算法的输出可以通过将计算出的坐标叠加到全聚焦图像（total focus images，这是什么意思？）上可视化。下面通过一套样例来解释目标点识别与模型点匹配的流程。
-
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-009.jpg" alt="全聚焦图像" width=50%>
-
-上图展示了一张处理后的全聚焦图像。
-
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-010.jpg" alt="目标点识别结果" width=50%>
-
-上图展示了在全聚焦图像上运行目标点识别的结果。这里出现了很多“假阳性”（False Positive），但作者并未说明如何排除。随后将拟合出的圆的中心点输入模型点匹配算法，以建立配对关系。
-
-下图展示了匹配成功的目标点。
-
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-011.jpg" alt="配对结果" width=50%>
-
-最后将目标点绘制在方形网格上，如下图所示。
-
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-012.jpg" alt="网格对齐结果" width=50%>
-
-为了拍摄多组样本，作者设计了一套系统，把一个与传感器平行的平面物体放在滑轨上前后移动并拍照，如下图所示。
-
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-013.jpg" alt="滑轨系统">
-
-由电机驱动的滑块可以提供精确的传感器到物体的距离。该距离可以作为标定时用到的真值（ground-truth）。接下来就是算出各个目标点的虚深度，将这些虚深度投影到和模型点附近，然后计算损失并优化内参估计。
-
-下图展示了Raytrix R29相机的分析结果，其主透镜为尼康50mm f/1.8，焦距440mm。
