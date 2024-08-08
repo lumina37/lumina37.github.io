@@ -79,3 +79,27 @@ fn deref_mut(self: &mut &'a Foo) -> &mut Foo
 #[derive(Copy, Clone, Hash, Eq, Ord)]
 pub struct Pin<P>
 ```
+
+与`Pin::as_mut`在指针上调用`deref_mut`并pin住返回值的方式类似，派生的`Pin::clone`在指针上调用`clone`并pin住返回值。
+
+和之前一样，通过`Pin::clone`触发UB的唯一方式是向现有的本地指针类型中添加一个`Clone`实现。下面还是在`&Foo`、`&mut Foo`、`Box<Foo>`或`Pin<Foo>`中做选择。这次`&Foo`被排除在外，因为它已经实现了`Clone`（有`Copy`就默认有`Clone`）。`Pin<Foo>`依然不可用（TODO：为什么？）。
+
+如果`Foo`实现了`Clone`，那么`Box<Foo>`就会实现`Clone`。如果`Foo`没有实现`Clone`，我们可以为`Box<Foo>`添加一个自定义的`Clone`实现，但这并没有什么用。给定一个`Box<Foo>`，`Pin::clone`会将其转换为 `Pin<Box<Foo>>`。但已经有一种方法可以做到这一点，也就是标准库中的`impl<T> From<Box<T>> for Pin<Box<T>>`。将现有的`Box`pin住是非常安全的，因为一旦`Box`被`Pin`包装，就无法再将其取出。
+
+剩下的就是`&mut Foo`，它没有内置的`Clone`实现。与`Box`相比，pin住已存在的引用是危险的，因为我们可以钉住一个重新借用的引用（例如从`RefCell`借用），然后通过让生命周期过期并访问我们最初重新借用的引用，有效地“将其重新取出”。这就是方法1的工作原理，我们在这里也可以这样做。
+
+方法2所需的类型签名很奇怪，但与方法1中的签名类似。上次我们必须实现：
+
+```rust
+fn deref_mut(self: &mut &'a Foo) -> &mut Foo
+```
+
+这次我们必须实现：
+
+```rust
+fn clone(self: &&'a mut Foo) -> &'a mut Foo
+```
+
+这里不再是可变引用指向不可变引用，而是不可变引用指向可变引用。生命周期的位置也不同。但除此之外都是一样的，所以漏洞利用实际上非常相似。
+
+### 方法3 - 不稳定特性`CoerceUnsized`
