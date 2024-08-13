@@ -1,22 +1,22 @@
 ---
-title: 不完善的Pin
+title: Unsoundness in Pin
 categories: Rust
 date: 2024/8/6 21:36:00
 ---
 
 ## 译者序
 
-`Pin`是Rust针对自引用结构体在移动时发生指针悬垂所提出的解决方案。本文是一篇Rust官方论坛语言设计板块的[帖文](https://internals.rust-lang.org/t/unsoundness-in-pin/11311)的中译（DeepL机翻+人工精修），主要讨论`Pin`的不完善性。
+`Pin`是Rust针对自引用结构体在移动时发生指针悬垂所提出的解决方案。本文是一篇Rust官方论坛语言设计板块的[帖文](https://internals.rust-lang.org/t/unsoundness-in-pin/11311)的中译（机翻+人工精修），主要讨论`Pin`的不健全性（Unsoundness）。
 
 在阅读前需要牢记一个印象：大部分“平凡”对象如`i32`、`String`都是`Unpin`的，这意味着这些对象可以被安全地移动到其他内存位置，只有`Future`等自引用对象才有必要成为`!Unpin`。
 
 ## 正文
 
-最近@withoutboats（Rust异步设计的核心参与者）向我提出了一个[挑战](https://www.reddit.com/r/rust/comments/dtfgsw/comment/f7bdzyx/?context=3)。他要求我提出一个具有不同保证（也就是不靠屏蔽`&mut T`来实现自引用安全）的`Pin`版本，并说明这个新`Pin`的完善性。然而，就在我做这项工作的时候，我偶然发现了当前`Pin`的不完善性。我以前从未见过这方面的报道，不过也有可能是我疏忽了。
+最近@withoutboats（Rust异步设计的核心参与者）向我提出了一个[挑战](https://www.reddit.com/r/rust/comments/dtfgsw/comment/f7bdzyx/?context=3)。他要求我提出一个具有不同保证（也就是不靠屏蔽`&mut T`来实现自引用安全）的`Pin`版本，并说明这个新`Pin`的健全性。然而，就在我做这项工作的时候，我偶然发现了当前`Pin`的不健全性。我以前从未见过这方面的报道，不过也有可能是我疏忽了。
 
 playground：https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=70b7b28b690e0020f52695b9e086f5c2
 
-这段代码演示了从`&mut Pin<P>`获取`Pin<&mut P::T>`的两个相关漏洞，最终导致了一个段错误。该代码使用稳定版本编译，没有不安全代码块。唯一的非标准库导入是来自futures的两样东西；它们只是为了方便，对漏洞利用并不重要。
+这段代码演示了从`&mut Pin<P>`获取`Pin<&mut P::Target>`的两个相关漏洞，最终导致了一个段错误。该代码使用稳定版本编译，没有不安全代码块。唯一的非标准库导入是来自futures的两样东西；它们只是为了方便，对漏洞利用并不重要。
 
 以下列举一些使用“安全”代码触发UB的方法：
 
@@ -67,7 +67,7 @@ fn deref_mut(self: &mut &'a Foo) -> &mut Foo
 
 然后，我们必须获得一个合法pinned的`Pin<&Foo>`，并调用`as_mut`。`as_mut`将被委托给我们自定义的`deref_mut`。`self`将是一个合法的pinned引用，但我们可以在`deref_mut`中返回一个完全不同的引用，然后`as_mut()`将以不安全的方式将其封装为`Pin`。
 
-在playground中作者通过`replace`方法将`&Cell`的内部值修改成了`None`，这事实上已经违背了`Pin`的规则。
+译注：在playground中作者通过`replace`方法将`&Cell`的内部值修改成了`None`，这事实上已经违背了`Pin`的规则。
 
 输入和输出都必须指向`Foo`，这在一定程度上造成了限制，但并不是致命的。为了能够在不使用不安全代码的情况下返回引用（我们可以使用`Box::leak`安全地返回`&'static mut`引用，但这样就无法利用漏洞触发UB：因为事后无法恢复引用），引用需要存储在输入`Foo`中，而输出`Foo`必须是某种`!Unpin`类型，在pin之后后移动这种类型实际上是很危险的。最直接的方法（尽管不是唯一的方法）是将`Foo`变为一个Trait对象，这样输入和输出就可以完全是不同的具体类型。更多详情，请参阅playground。
 
@@ -82,11 +82,11 @@ pub struct Pin<P>
 
 与`Pin::as_mut`在指针上调用`deref_mut`并pin住返回值的方式类似，派生的`Pin::clone`在指针上调用`clone`并pin住返回值。
 
-和之前一样，通过`Pin::clone`触发UB的唯一方式是向现有的本地指针类型中添加一个`Clone`实现。下面还是在`&Foo`、`&mut Foo`、`Box<Foo>`或`Pin<Foo>`中做选择。这次`&Foo`被排除在外，因为它已经实现了`Clone`（有`Copy`就默认有`Clone`）。`Pin<Foo>`依然不可用（TODO：为什么？）。
+和之前一样，通过`Pin::clone`触发UB的唯一方式是向现有的本地指针类型中添加一个`Clone`实现。可选项依然是`&Foo`、`&mut Foo`、`Box<Foo>`和`Pin<Foo>`。这次`&Foo`不适用，因为它已经实现了`Clone`（有`Copy`就默认有`Clone`）。`Pin<Foo>`依然没有用处（TODO：为什么？）。
 
-如果`Foo`实现了`Clone`，那么`Box<Foo>`就会实现`Clone`。如果`Foo`没有实现`Clone`，我们可以为`Box<Foo>`添加一个自定义的`Clone`实现，但这并没有什么用。给定一个`Box<Foo>`，`Pin::clone`会将其转换为 `Pin<Box<Foo>>`。但已经有一种方法可以做到这一点，也就是标准库中的`impl<T> From<Box<T>> for Pin<Box<T>>`。将现有的`Box`pin住是非常安全的，因为一旦`Box`被`Pin`包装，就无法再将其取出。
+如果`Foo`实现了`Clone`，那么`Box<Foo>`就会自动实现`Clone`。如果`Foo`没有实现`Clone`，我们可以为`Box<Foo>`添加一个自定义的`Clone`实现，但这并没有什么用。如果我们拿到一个`Box<Foo>`，`Pin::clone`会将其转换为`Pin<Box<Foo>>`。但已经有一种方法可以做到这一点，也就是标准库中的`impl<T> From<Box<T>> for Pin<Box<T>>`。将现有的`Box`pin住是完全安全的，因为一旦`Box`被`Pin`包装，就无法再将其取出。
 
-剩下的就是`&mut Foo`，它没有内置的`Clone`实现。与`Box`相比，pin住已存在的引用是危险的，因为我们可以钉住一个重新借用的引用（例如从`RefCell`借用），然后通过让生命周期过期并访问我们最初重新借用的引用，有效地“将其重新取出”。这就是方法1的工作原理，我们在这里也可以这样做。
+剩下的就是`&mut Foo`，它没有内置的`Clone`实现。与`Box`相比，pin住已存在的引用是危险的，因为我们可以pin住一个重新借用的引用（例如从`RefCell`借用），然后通过让生命周期过期并访问我们最初重新借用的引用，有效地“将其重新取出”。这就是方法1的工作原理，我们在这里也可以这样做。
 
 方法2所需的类型签名很奇怪，但与方法1中的签名类似。上次我们必须实现：
 
@@ -103,3 +103,50 @@ fn clone(self: &&'a mut Foo) -> &'a mut Foo
 这里不再是可变引用指向不可变引用，而是不可变引用指向可变引用。生命周期的位置也不同。但除此之外都是一样的，所以漏洞利用实际上非常相似。
 
 ### 方法3 - 不稳定特性`CoerceUnsized`
+
+好吧，我不能说这是我发现的，因为在注释中已经或多或少地解释过了：
+
+注释内容：注意：这意味着任何允许从实现了`Deref<Target=impl !Unpin>`的类型自动强制转换（术语为[Type Coercions](https://doc.rust-lang.org/reference/type-coercions.html)）到实现了`Deref<Target=Unpin>`的类型的`Trait CoerceUnsized`实现都是不健全的。不过，出于其他原因，任何这样的实现也可能是不健全的，因此我们只需注意不要让类似下面这样的实现进入标准库。
+
+```rust
+impl<P, U> CoerceUnsized<Pin<U>> for Pin<P>
+where
+    P: CoerceUnsized<U>,
+{}
+```
+
+这段实现允许你进行未定大小的强制转换，例如将`Pin<&T>`转换为`Pin<&Trait>`，这需要结合`&T`本身的`CoerceUnsized`实现。
+
+与评论相反，我认为最直接的危险是从`Unpin`转换为`!Unpin`。具体来说，就是一个实现允许从一个实现了`Deref`和`Target: Unpin`的类型`P`，强制转换为一个实现了`Deref`和`Target: !Unpin`的类型`U`。这样，你可以使用`Pin::new`创建一个`Pin<P>`，然后将其强制转换为`Pin<U>`。这种实现并不会出于其他原因而“必须不安全”。特别地，它不需要不安全代码，因为`P`和`U`的`Deref`实现并没有必要彼此关联：它们可以返回完全不同类型的引用。
+
+目前，`CoerceUnsized`功能被放在一个特性开关（feature gate）后面，因此评论中提醒“注意不要让此类实现进入标准库”是有道理的。如果没有这些实现，这个问题在稳定版上是无法被利用的。但需要说明的是，通过在nightly版中激活该特性开关，这个问题是可以被利用的。
+
+如果在稳定版上无法被利用，那我为什么还要提到它呢？因为迟早我们会以某种形式将`CoerceUnsized`稳定下来。即使你不打算编写自己的标准库，实现自定义的智能指针类型也是很常见的。然而，虽然标准库中的智能指针都实现了`CoerceUnsized`，例如允许你将`Rc<T>`强制转换为`Rc<Trait>`，但目前对于你自己的类型来说，还没有办法获得同样的功能。这显然是需要解决的问题。
+
+根据该讨论来看，稳定版的`CoerceUnsized`可能会与当前版本有所不同，并且它可能自身也存在健全性问题。但是，如果没有 `Pin`，我认为`Deref`的实现没有任何理由会影响健全性。现在却会产生影响，我不确定是应该通过更改强制转换来解决，还是通过更改`Pin`来解决。更多关于修复的讨论请见下文。
+
+### 关于已有的`CoerceUnsized`实现
+
+是否有办法利用标准库中现有的`CoerceUnsized`实现来攻击 `Pin`？目标是找到一种实现了`CoerceUnsized`的类型，我们可以任意控制它解引用到的内容：要么通过添加我们自己的`Deref`实现，要么通过某种方式利用现有的实现。
+
+省流：没有。
+
+以下列举了一些`CoerceUnsized`的实现：
+
+智能指针类型（以`impl<T, U> CoerceUnsized<Foo<U>> for Foo<T> where T: Unsize<U>`的形式）：
+
++ `Ref<T>`
++ `RefMut<T>`
++ `Unique<T>`
++ `NonNull<T>`
++ `&T`
++ `&mut T`
++ `*const T`
++ `*mut T`
+
+在这些类型中，`Ref<T>`、`RefMut<T>`、`&T`和`&mut T`都已经实现了 Deref，但它们比较“无趣”：它们只是简单地将自身指针转换为不同的类型，没有什么是我们可以控制的。对于其余的类型，我们可以尝试添加自己的`Deref`实现，但它们都不是基础类型。
+
+（我们可以为`&T`添加一个`DerefMut`实现，但那又回到了方法1，而不需要使用强制转换。）
+
+令人有些惊讶的是，裸指针（raw pointers）并不是基本类型，而引用是——换句话说，你无法为`*const MyType`实现任何特性。这看起来像是一个应该修复的疏忽，但这样做会使这个问题变得可被利用。
+
