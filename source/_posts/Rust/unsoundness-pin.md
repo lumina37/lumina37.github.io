@@ -150,3 +150,60 @@ where
 
 令人有些惊讶的是，裸指针（raw pointers）并不是基本类型，而引用是——换句话说，你无法为`*const MyType`实现任何特性。这看起来像是一个应该修复的疏忽，但这样做会使这个问题变得可被利用。
 
+类包装器（Wrapper-like）类型（以`impl<T, U> CoerceUnsized<Foo<U>> for Foo<T> where T: CoerceUnsized<U>`的形式）：
+
++ `Cell<T>`
++ `RefCell<T>`
++ `UnsafeCell<T>`
++ `Pin<T>`
+
+前面三个没有实现 `Deref`。
+
+`Pin`实现了`impl<P: Deref> Deref for Pin<P>`。它也是基础类型，因此我们可以为`Pin<Foo<T>>`实现 `Deref`，但前提是`Foo`是本地的（local-ish）且没有实现`Deref`，这与添加`Deref`实现所需的条件相同。所以我们最终需要的正是最初想要的：一个我们可以控制或自己编写`Deref`实现的类型，同时还实现了`CoerceUnsized`。这并没有帮助。
+
+### 不算方法的方法 - 子类型
+
+另一种更改`Pin`类型的方法是使用变体（variance），但这只允许你更改生命周期。
+
+理论上，你可以有一个类型，其是否为`Unpin`取决于生命周期的条件，因此在更改生命周期后，你会得到一个指向`!Unpin`类型的`Pin`。
+
+```rust
+struct Foo<'a>(&'a ());
+impl Unpin for Foo<'static> {}
+
+fn test<'a>(p: Pin<&'a Foo<'a>>) {
+    Pin::into_inner(p); // error: does not impl Unpin
+}
+fn main() {
+    test(Pin::new(&Foo(&())));
+}
+```
+
+但是我不觉得实际上有任何途径可以利用这个漏洞。
+
+### 可能的修复方法
+
+因为这个概念验证可以在稳定版上运行，所以要修复它本质上需要一个破坏性更改。
+
+最直接的修复方法似乎是阻止用户为不可变引用实现`DerefMut`或为可变引用实现`Clone`。我认为可以通过在标准库中添加虚拟的blanket实现来实现这一点：
+
+译注：blanket实现指的是一种泛型实现，它适用于所有满足某些条件的类型。例如，在Rust的标准库中，有一个`impl<T> Deref for T where T: SomeTrait`的blanket实现。这意味着只要一个类型`T`实现了`SomeTrait`，那么它就会自动获得`Deref`特性，而无需手动为`T`实现 `Deref`。这意味着我们可以添加一些blanket实现来阻止某些类型的不合法实现（为不可变引用实现 `DerefMut`，或者为可变引用实现 `Clone`）。
+
+```rust
+pub trait DummyTrait {}
+pub struct DummyStruct<T>(T);
+impl<'a, T> DerefMut for &'a T where DummyStruct<T>: DummyTrait { ... }
+impl<'a, T> Clone for &'a mut T where DummyStruct<T>: DummyTrait { ... }
+```
+
+我想了解这是否会破坏任何实际代码。
+
+当`CoerceUnsized`稳定后，该怎么办？我们如何在自己的类型上安全地实现`CoerceUnsized`？我能想到两种基本方法：
+
+1. 我们可以要求`CoerceUnsized`与`Deref`和`DerefMut`保持“一致性”，也就是说，在类型转换前后调用`deref()`和`deref_mut()`应该返回相同的值。
+
+不过，编译器可能很难强制执行这一点，尤其是考虑到我们甚至不要求`deref`和`deref_mut`是纯函数。我们可以将`CoerceUnsized`标记为不安全的，并将一致性检查的责任交给程序员，但如果它本质上并不需要不安全，这似乎不太理想。
+
+或者，我们可以简单地将`Pin`的`CoerceUnsized`实现依赖到一个不安全的标记特性。因此，如果你定义了一个从`Foo`强制转换为`Bar`的结构体，你仍然无法将`Pin<Foo>`强制转换为`Pin<Bar>`，除非你为`Foo`实现了那个不安全的特性。
+
+不过，很有可能我错过了一些更好的解决方案，尤其考虑到`CoerceUnsized`的稳定版本还没有完全设计好。
