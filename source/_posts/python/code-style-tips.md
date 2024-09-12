@@ -58,7 +58,7 @@ ignore = ["E402", "E501"]
 
 相对于姊妹[scikit-build](https://github.com/scikit-build/scikit-build)，它完全摒弃了以setup.py为主CMakeLists.txt为辅的思路，转为完全在CMakeLists.txt中定义Py扩展库的构建流程，从而可以为IDE的各种静态分析工具提供更好的兼容性，也更遵从[PEP-621](https://peps.python.org/pep-0621) (把所有元数据扔进pyproject.toml) 的思路。
 
-我还为这个工具写了一个[demo project](https://github.com/Starry-OvO/py-cffi-bridge-npy-and-ocv-demo)。
+我还为这个工具写了一个[demo project](https://github.com/lumina37/py-cffi-bridge-npy-and-ocv-demo)。
 
 ## 使用property提供参数提示
 
@@ -101,11 +101,11 @@ print_angle_num(ds_cfg)
 
 在VSCode中，将鼠标悬停在通过字典传参的`angle_num`上时，我们无法获得任何关于`angle_num`的信息。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2302_code-style-tips/bad_config.png" alt="bad_config">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2302_code-style-tips/bad_config.png" alt="bad_config">
 
 而通过自定义`DatasetConfig`，我们利用`property`为类成员变量`angle_num`添加了类型提示、文档以及只读保护。看看它的鼠标悬停效果。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2302_code-style-tips/property.png" alt="property">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2302_code-style-tips/property.png" alt="property">
 
 **类型提示**，意味着你不需要像这样`angle_num: int = ds_cfg['angle_num']`在每次取用参数时都手动添加类型提示
 
@@ -115,7 +115,7 @@ print_angle_num(ds_cfg)
 
 类属性也天然支持IDE的自动补全功能：
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2302_code-style-tips/hints.png" alt="hints">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2302_code-style-tips/hints.png" alt="hints">
 
 后续在修改`angle_num`的名称时，我们也不再需要战战兢兢地做全局搜索，只需要使用IDE自带的变量重命名功能即可。
 
@@ -240,9 +240,9 @@ bird_abc.fly()
 
 将语言服务器Pylance的类型检查功能打开，你就能看到对应的两条警告：
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2302_code-style-tips/WarnBirdProtocol.png" alt="WarnBirdProtocol">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2302_code-style-tips/WarnBirdProtocol.png" alt="WarnBirdProtocol">
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2302_code-style-tips/WarnBirdABC.png" alt="WarnBirdABC">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2302_code-style-tips/WarnBirdABC.png" alt="WarnBirdABC">
 
 现在设想一下，如果我们编写的库需要将`BirdABC`暴露给用户，然而出于某种失误`BirdABC`并没有实现`fly`方法，进而变成了一个抽象类，与其将这种错误留待测试甚至留给用户去发现，不如在定义`BirdABC`/`BirdProtocol`时就通过静态检查将其揪出来。
 
@@ -286,7 +286,7 @@ fly_abc(bird)  # Warning: `Bird` is incompatible with `AbsBirdABC`
 
 其中`fly_abc(bird)`会抛出如下警告：
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2302_code-style-tips/Warnfly_abc.png" alt="Warnfly_abc">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2302_code-style-tips/Warnfly_abc.png" alt="Warnfly_abc">
 
 出现该警告的原因是，对于`abc.ABC`而言，只有显式继承了抽象接口的类才被视为兼容抽象接口的具体类。这里`Bird`没有继承`AbsBirdABC`，因此类型检查工具认为`Bird`与`AbsBirdABC`不兼容。
 

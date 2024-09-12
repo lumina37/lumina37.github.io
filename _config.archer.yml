@@ -1,6 +1,6 @@
 # ========== Profile ========== #
 # avatar
-avatar: https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/97806575_p0_1M.jpg
+avatar: https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2303_blog/97806575_p0_1M.jpg
 # author name
 author: Lumina
 # signature
@@ -8,7 +8,7 @@ signature: 永远怀着一颗学徒的心
 # SNS (you can custom the order)
 social:
   email: starry.qvq@gmail.com
-  github: //github.com/Starry-OvO
+  github: //github.com/lumina37
   # wechat should be a path of qr-code image path
   wechat:
   # qq should be a path of qr-code image path
@@ -71,9 +71,9 @@ main_title: Lumina's fat cat
 # subtitle
 subtitle:
 # site haeder image
-site_header_image: "https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/himinil_1080p.jpg"
+site_header_image: "https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2303_blog/himinil_1080p.jpg"
 # post haeder image
-post_header_image: "https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2303_blog/himinil_1080p.jpg"
+post_header_image: "https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2303_blog/himinil_1080p.jpg"
 # 404 image
 _404_image: "/intro/404-bg.jpg"
 

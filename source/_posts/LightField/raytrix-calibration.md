@@ -43,11 +43,11 @@ mathjax: true
 
 下图是Plenoptic 2.0（聚焦式全光相机）的成像示意图。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="聚焦式全光相机成像示意图">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="聚焦式全光相机成像示意图">
 
 上图中，Image是仅有主透镜无MLA的成像位置。MLA将光线会聚的位置“提前”到了TCP（Total Covering Plane，不知道怎么翻译）所在的位置。我们在MLA之后，TCP的附近放置传感器，这样每个ML都会在传感器上成一个小圆像。这些小圆像被称作MI（Microlens Image）。相邻的MI存在部分相似，这是因为物体上同一块区域发出的光可以由紧邻的多个ML成像，相邻的MI包含了物上的同一区域，自然也就存在相似性了。我们可以进一步利用这些相似区域之间的距离关系估算深度。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-002.jpg" alt="深度估计示意图" width="50%">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-002.jpg" alt="深度估计示意图" width="50%">
 
 如上图所示，由物上一点发出的三条特殊光线，恰好经过三个ML（Micro Len，微透镜）的中心点，打在成像平面上的$i_1$、$i_2$和$i_3$三点，最终会聚于$P_V$点。因为光线恰好穿过ML中心，因此并未发生偏折，$P_V$其实就是主透镜的焦点。而所谓成像平面其实就是ML的焦平面。中三个ML的中心点分别记作$c_1$、$c_2$和$c_3$。图中的$D$是相邻ML的中心距离。$a$是$P_V$点“到相机的距离”$a$，也就是到MLA[主平面](https://zh.wikipedia.org/zh-cn/%E5%9F%BA%E9%BB%9E)的距离。$b$是成像平面（注意成像平面≠传感器）到MLA主平面的距离，并且是一个常量，但我们通常并不能直接得知，**所谓标定，终极目标就是把这个$b$标定出来**。
 
@@ -57,7 +57,7 @@ $$v = \frac{a}{b} = \frac{D}{D-(i_1-i_2)}$$
 
 Raytrix相机还有一个多焦点（Multi-Focus）的特性，即在相机的MLA中存在三种不同焦距的ML。该特性使得相机能获得更大的景深（DoF，Depth of Field），但也会造成一种特殊的“偏差”（aberration），如下图所示，即测量出三种不同的成像平面。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-003.jpg" alt="存在多种焦距的ML导致的测量偏差">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-003.jpg" alt="存在多种焦距的ML导致的测量偏差">
 
 因为成像平面到MLA主平面的距离与虚深度线性相关，由此我们可以假定对不同的ML有不同的$b$，并用$b_i$表示第$i$种ML对应的$b$。
 
@@ -65,7 +65,7 @@ Raytrix相机还有一个多焦点（Multi-Focus）的特性，即在相机的ML
 
 下图粗略地演示了从MLA左侧的虚深度到主透镜右侧的真实深度的转换过程。该图同样展示了投影过程中各个空间的名称。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-004.jpg" alt="从虚深度到真实深度的投影转换示意图">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-004.jpg" alt="从虚深度到真实深度的投影转换示意图">
 
 空间Ⅰ中的点由“横向”（这里指的是垂直于主光轴的方向，搞不懂为什么要叫lateral）的坐标再加上虚深度来表示。空间Ⅱ中的点是由空间Ⅰ投影而来的真实坐标，其实就对应了$P_V$的坐标。空间Ⅲ的点为去变形（undistorted）之后的点。去变形的效果就相当于把主透镜摆正。空间Ⅳ的点为对应的真实物体上的点，也反映了真实深度。这些点的$x$、$y$坐标轴与主光轴垂直，$z$坐标轴与主光轴平行。感觉原始概念有些难以理解，还是来看公式吧。
 
@@ -79,11 +79,11 @@ $$z_Ⅱ = z_Ⅰ \cdot b_i$$
 
 为建模主透镜在倾斜和偏移状态下的3D位姿，以下定义一系列变量。$\theta_L$、$\sigma_L$用于表示主透镜的朝向角；$X_L$、$Y_L$用于表示主透镜中心相对传感器中心的坐标偏移；而主透镜与传感器之间的距离被定义为$Z_L$。这个$Z_L$不需要特意求取，因为我们后面的计算只会用到主透镜与TCP之间的距离$B_L$。变量的可视化如下图所示：
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-007.jpg" alt="变量可视化">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-007.jpg" alt="变量可视化">
 
 对于光场相机而言，主透镜的倾斜会导致最终成像的倾斜，如下图所示。这一效应被称为沙姆定律（Scheimpflug Principle）。关于沙姆定律的一些科普可以看这篇知乎文章《[移轴摄影、沙姆定律与射影几何](https://zhuanlan.zhihu.com/p/25030168)》。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-006.jpg" alt="倾斜的主透镜">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-006.jpg" alt="倾斜的主透镜">
 
 以沙姆定律为基础，我们可以通过一次旋转来纠正倾斜变形。这次旋转的旋转轴应与主光轴垂直。
 
@@ -104,7 +104,7 @@ $$B_L = \frac{T_L}{2} \left( 1 - \sqrt{1 - 4 \frac{f_L}{T_L}} \right)$$
 
 其中$f_L$是主透镜的焦距，$T_L$为主透镜的对焦距离（焦点到被摄物体的距离？）。这里各种距离的概念有点多，为方便读者理解我把上面的那张成像示意图再贴一遍。
 
-<img src="https://cdn.jsdelivr.net/gh/Starry-OvO/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="散焦式全光相机成像示意图">
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2403_raytrix-calibration/fig-001.jpg" alt="散焦式全光相机成像示意图">
 
 现在，只需要把从MLA起算的深度$z_Ⅲ'$与主透镜到TCP的距离$B_L$加起来，再减去MLA到TCP的距离就能得到从主透镜起算的深度，亦即空间Ⅲ中的深度$z_Ⅲ$了。而根据光场相机的设计理论，TCP到传感器的距离恰好等于传感器与MLA之间的间距$b_i$（$b_i$不是随透镜类型变化的吗？而传感器与MLA之间的间距似乎是个固定值？这里我没读懂。）。于是我们可以写出$z_Ⅲ$的表达式：
 
