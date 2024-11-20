@@ -1,5 +1,5 @@
 ---
-title: 高性能图像缩放：Pillow-SIMD resize [2]
+title: 【高性能图像缩放】 Pillow-SIMD resize [2]
 categories: Algorithm
 date: 2024/3/17 14:35:00
 mathjax: true
