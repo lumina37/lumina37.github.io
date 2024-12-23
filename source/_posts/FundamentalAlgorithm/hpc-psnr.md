@@ -30,24 +30,86 @@ $$PSNR = 10 \cdot \log_{10}\left(\frac{MAX_I^2}{MSE}\right)$$
 
 ## 性能统计汇总
 
-- 参评对象：ffmpeg及main-v1~v5
+- 参评对象：ffmpeg及main-v1~v4
 - 数据：300帧yuv420p的视频序列
 - 硬件：AMD 7950X 定频4.5GHz
 - 实验方案：8次缓存预热后重复计算128次全序列平均PSNR，统计用户态耗时的均值和标准差
 
+时间统计脚本（由Claude3.5编写）
+
+```sh
+#!/bin/bash
+
+# 检查是否提供了命令行参数
+if [ $# -eq 0 ]; then
+    echo "用法: $0 \"要执行的命令\""
+    exit 1
+fi
+
+# 保存要执行的命令
+COMMAND="$1"
+
+# 预热缓存：执行8次命令
+echo "预热缓存中（执行8次）..."
+for ((i=1; i<=8; i++)); do
+    $COMMAND > /dev/null 2>&1
+done
+
+# 存储执行时间的临时文件
+TEMP_FILE=$(mktemp)
+
+# 执行128次并记录用户态时间
+echo "开始性能测试（执行128次）..."
+for ((i=1; i<=128; i++)); do
+    # 使用 time 命令，-f 格式化输出，%U 表示用户态时间
+    /usr/bin/time -f "%U" -o "$TEMP_FILE.tmp" $COMMAND > /dev/null 2>&1
+    
+    # 追加时间到临时文件
+    cat "$TEMP_FILE.tmp" >> "$TEMP_FILE"
+done
+
+# 计算均值和标准差
+# 使用 awk 进行统计计算
+STATS=$(awk '
+    {
+        sum += $1;
+        sumsq += ($1 * $1);
+        count++;
+    }
+    END {
+        mean = sum / count;
+        variance = (sumsq / count) - (mean * mean);
+        stddev = sqrt(variance);
+        printf "平均用户态时间: %.6f 秒\n标准差: %.6f 秒", mean, stddev
+    }' "$TEMP_FILE")
+
+# 显示统计结果
+echo "测试命令: $COMMAND"
+echo "$STATS"
+
+# 清理临时文件
+rm "$TEMP_FILE" "$TEMP_FILE.tmp"
+```
+
+运行命令参考：
+
+```shell
+./time.sh "./clang/main-v1 2048 2048 300 /path/to/lhs.yuv /path/to/rhs.yuv"
+```
+
+性能统计结果：
+
 | 版本     | 平均用户态耗时 (ms) | 标准差 (ms) |
 | -------- | ------------------- | ----------- |
-| ffmpeg   | 758.203             | 263.039     |
-| clang-v1 | 130.703             | 4.363       |
-| clang-v2 | 48.281              | 3.773       |
-| clang-v3 | 23.828              | 4.861       |
-| clang-v4 | 23.125              | 4.635       |
-| clang-v5 | 22.422              | 4.284       |
-| gcc-v1   | 126.484             | 4.935       |
-| gcc-v2   | 39.766              | 2.641       |
-| gcc-v3   | 26.094              | 4.879       |
-| gcc-v4   | 24.531              | 4.978       |
-| gcc-v5   | 22.266              | 4.186       |
+| ffmpeg   | 951.797             | 239.062     |
+| clang-v1 | 131.563             | 3.631       |
+| clang-v2 | 49.141              | 3.069       |
+| clang-v3 | 24.766              | 9.840       |
+| clang-v4 | 22.656              | 15.835      |
+| gcc-v1   | 127.500             | 8.004       |
+| gcc-v2   | 40.078              | 1.975       |
+| gcc-v3   | 28.047              | 22.223      |
+| gcc-v4   | 24.609              | 10.451      |
 
 ## 实现与优化思路
 
@@ -108,23 +170,23 @@ CMD ["bash"]
 gcc
 
 ```log
- Performance counter stats for './gcc/minicase-v2':
+ Performance counter stats for './gcc/minicase-v1':
 
-            720.80 msec task-clock                       #    1.000 CPUs utilized             
-                 3      context-switches                 #    4.162 /sec                      
-                 1      cpu-migrations                   #    1.387 /sec                      
-         1,048,704      page-faults                      #    1.455 M/sec                     
-     3,243,461,786      cycles                           #    4.500 GHz                       
-       646,369,783      stalled-cycles-frontend          #   19.93% frontend cycles idle      
-     6,326,750,058      instructions                     #    1.95  insn per cycle            
-                                                  #    0.10  stalled cycles per insn   
-     1,026,020,713      branches                         #    1.423 G/sec                     
-         2,344,145      branch-misses                    #    0.23% of all branches           
+            850.99 msec task-clock                       #    1.000 CPUs utilized             
+                 4      context-switches                 #    4.700 /sec                      
+                 3      cpu-migrations                   #    3.525 /sec                      
+         1,048,704      page-faults                      #    1.232 M/sec                     
+     3,829,412,311      cycles                           #    4.500 GHz                       
+       627,711,647      stalled-cycles-frontend          #   16.39% frontend cycles idle      
+     7,341,906,139      instructions                     #    1.92  insn per cycle            
+                                                  #    0.09  stalled cycles per insn   
+       825,780,655      branches                         #  970.373 M/sec                     
+         2,344,399      branch-misses                    #    0.28% of all branches           
 
-       0.721014382 seconds time elapsed
+       0.851319970 seconds time elapsed
 
-       0.193999000 seconds user
-       0.526997000 seconds sys
+       0.347096000 seconds user
+       0.504139000 seconds sys
 ```
 
 clang
@@ -132,21 +194,21 @@ clang
 ```log
  Performance counter stats for './clang/minicase-v1':
 
-            852.94 msec task-clock                       #    1.000 CPUs utilized             
-                 0      context-switches                 #    0.000 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.230 M/sec                     
-     3,838,153,603      cycles                           #    4.500 GHz                       
-       627,655,061      stalled-cycles-frontend          #   16.35% frontend cycles idle      
-     7,903,899,440      instructions                     #    2.06  insn per cycle            
+            832.69 msec task-clock                       #    1.000 CPUs utilized             
+                 7      context-switches                 #    8.406 /sec                      
+                 7      cpu-migrations                   #    8.406 /sec                      
+         1,048,705      page-faults                      #    1.259 M/sec                     
+     3,747,029,610      cycles                           #    4.500 GHz                       
+       634,324,072      stalled-cycles-frontend          #   16.93% frontend cycles idle      
+     7,921,290,568      instructions                     #    2.11  insn per cycle            
                                                   #    0.08  stalled cycles per insn   
-       887,704,043      branches                         #    1.041 G/sec                     
-         2,373,633      branch-misses                    #    0.27% of all branches           
+       890,017,626      branches                         #    1.069 G/sec                     
+         2,407,707      branch-misses                    #    0.27% of all branches           
 
-       0.853116171 seconds time elapsed
+       0.833023709 seconds time elapsed
 
-       0.347068000 seconds user
-       0.506099000 seconds sys
+       0.354981000 seconds user
+       0.477974000 seconds sys
 ```
 
 其中`perf stat`的各统计数据的意义可以参考[这篇文章](http://www.lenzhao.com/topic/5981b1212e95f0fd0a981870)。
@@ -303,21 +365,21 @@ gcc
 ```log
  Performance counter stats for './gcc/minicase-v2':
 
-            715.63 msec task-clock                       #    1.000 CPUs utilized             
-                 1      context-switches                 #    1.397 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.465 M/sec                     
-     3,220,258,049      cycles                           #    4.500 GHz                       
-       645,569,842      stalled-cycles-frontend          #   20.05% frontend cycles idle      
-     6,297,236,854      instructions                     #    1.96  insn per cycle            
+            696.73 msec task-clock                       #    1.000 CPUs utilized             
+                 4      context-switches                 #    5.741 /sec                      
+                 3      cpu-migrations                   #    4.306 /sec                      
+         1,048,705      page-faults                      #    1.505 M/sec                     
+     3,135,228,127      cycles                           #    4.500 GHz                       
+       625,961,052      stalled-cycles-frontend          #   19.97% frontend cycles idle      
+     6,314,586,514      instructions                     #    2.01  insn per cycle            
                                                   #    0.10  stalled cycles per insn   
-     1,022,511,180      branches                         #    1.429 G/sec                     
-         2,332,402      branch-misses                    #    0.23% of all branches           
+     1,024,910,637      branches                         #    1.471 G/sec                     
+         2,414,921      branch-misses                    #    0.24% of all branches           
 
-       0.715805466 seconds time elapsed
+       0.697014161 seconds time elapsed
 
-       0.203239000 seconds user
-       0.512604000 seconds sys
+       0.202994000 seconds user
+       0.493987000 seconds sys
 ```
 
 clang
@@ -325,21 +387,21 @@ clang
 ```log
  Performance counter stats for './clang/minicase-v2':
 
-            716.08 msec task-clock                       #    1.000 CPUs utilized             
-                 2      context-switches                 #    2.793 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,703      page-faults                      #    1.464 M/sec                     
-     3,222,263,484      cycles                           #    4.500 GHz                       
-       630,123,974      stalled-cycles-frontend          #   19.56% frontend cycles idle      
-     6,150,346,906      instructions                     #    1.91  insn per cycle            
+            705.42 msec task-clock                       #    1.000 CPUs utilized             
+                 2      context-switches                 #    2.835 /sec                      
+                 2      cpu-migrations                   #    2.835 /sec                      
+         1,048,705      page-faults                      #    1.487 M/sec                     
+     3,174,385,509      cycles                           #    4.500 GHz                       
+       637,967,638      stalled-cycles-frontend          #   20.10% frontend cycles idle      
+     6,169,517,815      instructions                     #    1.94  insn per cycle            
                                                   #    0.10  stalled cycles per insn   
-     1,020,598,509      branches                         #    1.425 G/sec                     
-         2,340,725      branch-misses                    #    0.23% of all branches           
+     1,023,282,578      branches                         #    1.451 G/sec                     
+         2,431,497      branch-misses                    #    0.24% of all branches           
 
-       0.716288318 seconds time elapsed
+       0.705632828 seconds time elapsed
 
-       0.213090000 seconds user
-       0.503213000 seconds sys
+       0.216196000 seconds user
+       0.489444000 seconds sys
 ```
 
 可以看到v2相较v1大幅减少了指令数和分支数。
@@ -401,21 +463,21 @@ gcc
 ```log
  Performance counter stats for './gcc/minicase-v3':
 
-            705.02 msec task-clock                       #    1.000 CPUs utilized             
-                 3      context-switches                 #    4.255 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,705      page-faults                      #    1.487 M/sec                     
-     3,172,446,887      cycles                           #    4.500 GHz                       
-       640,578,837      stalled-cycles-frontend          #   20.19% frontend cycles idle      
-     5,884,826,983      instructions                     #    1.85  insn per cycle            
+            677.86 msec task-clock                       #    1.000 CPUs utilized             
+                 3      context-switches                 #    4.426 /sec                      
+                 3      cpu-migrations                   #    4.426 /sec                      
+         1,048,705      page-faults                      #    1.547 M/sec                     
+     3,050,371,910      cycles                           #    4.500 GHz                       
+       628,063,961      stalled-cycles-frontend          #   20.59% frontend cycles idle      
+     5,908,509,861      instructions                     #    1.94  insn per cycle            
                                                   #    0.11  stalled cycles per insn   
-     1,020,946,737      branches                         #    1.448 G/sec                     
-         2,339,989      branch-misses                    #    0.23% of all branches           
+     1,024,316,223      branches                         #    1.511 G/sec                     
+         2,406,187      branch-misses                    #    0.23% of all branches           
 
-       0.705276369 seconds time elapsed
+       0.678125205 seconds time elapsed
 
-       0.175070000 seconds user
-       0.530212000 seconds sys
+       0.198028000 seconds user
+       0.480069000 seconds sys
 ```
 
 clang
@@ -423,286 +485,26 @@ clang
 ```log
  Performance counter stats for './clang/minicase-v3':
 
-            696.70 msec task-clock                       #    1.000 CPUs utilized             
-                 0      context-switches                 #    0.000 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.505 M/sec                     
-     3,135,102,182      cycles                           #    4.500 GHz                       
-       633,710,248      stalled-cycles-frontend          #   20.21% frontend cycles idle      
-     5,755,898,657      instructions                     #    1.84  insn per cycle            
+            680.48 msec task-clock                       #    1.000 CPUs utilized             
+                 3      context-switches                 #    4.409 /sec                      
+                 1      cpu-migrations                   #    1.470 /sec                      
+         1,048,704      page-faults                      #    1.541 M/sec                     
+     3,062,133,602      cycles                           #    4.500 GHz                       
+       633,752,352      stalled-cycles-frontend          #   20.70% frontend cycles idle      
+     5,779,014,107      instructions                     #    1.89  insn per cycle            
                                                   #    0.11  stalled cycles per insn   
-     1,021,842,610      branches                         #    1.467 G/sec                     
-         2,349,301      branch-misses                    #    0.23% of all branches           
+     1,025,058,381      branches                         #    1.506 G/sec                     
+         2,388,288      branch-misses                    #    0.23% of all branches           
 
-       0.696893328 seconds time elapsed
+       0.680707686 seconds time elapsed
 
-       0.189982000 seconds user
-       0.506953000 seconds sys
+       0.194193000 seconds user
+       0.486484000 seconds sys
 ```
 
-### v4 - 减少分支
+### v4 - 循环展开
 
-在v3中，每个循环都要判断两次分支，一次退出条件判断，一次`group_len`有关的uint32溢出判断。我们可以预先计算`len`中有多少个`group_len`，以减少后一种分支。
-
-v4版本的`sqrdiff`实现如下：
-
-```cpp
-#include <cstddef>
-#include <cstdint>
-#include <immintrin.h>
-#include <limits>
-
-uint64_t sqrdiff(const uint8_t* lhs, const uint8_t* rhs, size_t len) noexcept
-{
-    const uint8_t* lhs_cursor = lhs;
-    const uint8_t* rhs_cursor = rhs;
-    const size_t m128_cnt = len / sizeof(__m128i);
-    constexpr size_t step = sizeof(__m128i) / sizeof(uint8_t);
-    constexpr size_t u8max = std::numeric_limits<uint8_t>::max();
-    constexpr size_t u32max = std::numeric_limits<uint32_t>::max();
-    constexpr size_t group_len = u32max / (u8max * u8max * 2);
-    // 总共group_cnt大组
-    const size_t group_cnt = m128_cnt / group_len;
-    // 还剩下resi_len个小组
-    const size_t resi_len = m128_cnt - group_cnt * group_len;
-
-    uint64_t sqr_diff_acc = 0;
-    __m256i u32sqr_diff_acc = _mm256_setzero_si256();
-
-    auto dump_unit = [&](const __m256i u8l, const __m256i u8r) mutable {
-        const __m256i i16diff = _mm256_sub_epi16(u8l, u8r);
-        const __m256i u32sqr_diff = _mm256_madd_epi16(i16diff, i16diff);
-        u32sqr_diff_acc = _mm256_add_epi32(u32sqr_diff_acc, u32sqr_diff);
-    };
-
-    auto dump_u32sqr_diff_acc = [&]() mutable {
-        const __m256i u64sqr_diff_acc_p0 = _mm256_cvtepu32_epi64(_mm256_extractf128_si256(u32sqr_diff_acc, 0));
-        const __m256i u64sqr_diff_acc_p1 = _mm256_cvtepu32_epi64(_mm256_extractf128_si256(u32sqr_diff_acc, 1));
-        const __m256i u64sqr_diff_acc = _mm256_add_epi64(u64sqr_diff_acc_p0, u64sqr_diff_acc_p1);
-        const auto* tmp = (uint64_t*)&u64sqr_diff_acc;
-        sqr_diff_acc += (tmp[0] + tmp[1] + tmp[2] + tmp[3]);
-    };
-
-    for (size_t igroup = 0; igroup < group_cnt; igroup++) {
-        for (size_t i = 0; i < group_len; i++) {
-            const __m256i u8l = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)lhs_cursor));
-            const __m256i u8r = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)rhs_cursor));
-            dump_unit(u8l, u8r);
-            lhs_cursor += step;
-            rhs_cursor += step;
-        }
-
-        dump_u32sqr_diff_acc();
-        u32sqr_diff_acc = _mm256_setzero_si256();
-    }
-
-    for (size_t i = 0; i < resi_len; i++) {
-        const __m256i u8l = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)lhs_cursor));
-        const __m256i u8r = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)rhs_cursor));
-        dump_unit(u8l, u8r);
-        lhs_cursor += step;
-        rhs_cursor += step;
-    }
-
-    dump_u32sqr_diff_acc();
-
-    return sqr_diff_acc;
-}
-```
-
-v4版本的汇编如下：
-
-```nasm
-sqrdiff(unsigned char const*, unsigned char const*, unsigned long):
-        push    r15                         ; 保护寄存器
-        push    r14
-        push    r12
-        push    rbx
-        mov     rcx, rdx                    ; rcx是len
-        mov     r8, rdx
-        shr     r8, 4                       ; r8是len除以16后得到的m128_cnt
-        movabs  rdx, 1143949488658808833    ; 这个魔法数用来计算整数除法，后面解释
-        mov     rax, rcx                    ; 现在rax中是len的原始值
-        mul     rdx
-        shr     rdx, 15                     ; 现在rdx是group_cnt
-        imul    r9, rdx, -33025             ; group_cnt乘-33025，也就是-group_cnt*group_len
-        lea     rax, [r9 + r8]              ; 用lea计算加法得到resi_len
-        cmp     rcx, 528400                 ; 如果len大于33025*16，即至少有一个大组，跳到.LBB0_2
-        jae     .LBB0_2
-        xor     ecx, ecx
-        test    rax, rax                    ; 如果resi_len也为0那就直接返回
-        je      .LBB0_9
-.LBB0_10:
-        ; 这部分判断要不要处理residual
-        mov     edx, 1
-        sub     rdx, r8                     ; %rdx = 1 - m128_cnt
-        cmp     r9, rdx                     ; 如果m128_cnt - group_cnt * group_len != 1
-        jne     .LBB0_12                    ; 说明还能做循环展开，就跳去.LBB0_12
-        vpxor   xmm0, xmm0, xmm0
-        jmp     .LBB0_14                    ; 否则，就跳到.LBB0_14做单个处理
-.LBB0_2:
-        imul    r11, rdx, 528400            ; r11是group_cnt的长度
-        lea     r10, [rdi + r11]            ; r10是group_cnt后面不成组的residual部分的起始地址
-        xor     ebx, ebx
-        mov     r14, rsi                    ; 把rsi暂存在r14
-        xor     ecx, ecx
-        jmp     .LBB0_3
-.LBB0_6:
-        add     r14, 528400                 ; 步进一个大组
-        vpmovzxdq       ymm1, xmm0          ; 把累加结果dump到uint64
-        vextracti128    xmm0, ymm0, 1
-        vpmovzxdq       ymm0, xmm0
-        vpaddq  ymm0, ymm1, ymm0
-        vextracti128    xmm1, ymm0, 1
-        vpaddq  xmm0, xmm0, xmm1
-        vpshufd xmm1, xmm0, 238
-        vpaddq  xmm0, xmm0, xmm1
-        vmovq   rdi, xmm0
-        add     rcx, rdi                    ; dump完毕
-        inc     rbx
-        mov     rdi, r15
-        cmp     rbx, rdx                    ; 这里rdx是group_cnt
-        je      .LBB0_7
-.LBB0_3:
-        ; 向量化处理前的一些准备工作
-        lea     r15, [rdi + 528400]
-        vpxor   xmm0, xmm0, xmm0
-        xor     r12d, r12d
-.LBB0_4:
-        ; 由于循环体指令数大幅减少
-        ; 这里clang做了一个2x循环展开
-        vpmovzxbw       ymm1, xmmword ptr [rdi + r12]
-        vpmovzxbw       ymm2, xmmword ptr [r14 + r12]
-        vpsubw  ymm1, ymm1, ymm2
-        vpmaddwd        ymm1, ymm1, ymm1
-        vpaddd  ymm0, ymm1, ymm0
-        cmp     r12, 528384     ; 528384/32=33024/2
-        je      .LBB0_6         ; 因为跳转指令是放在中间的，而不是add 32之后立马跳，所以总共执行了33025次
-                                ; 把跳转放中间是循环展开中一个常见的技巧
-        vpmovzxbw       ymm1, xmmword ptr [rdi + r12 + 16]
-        vpmovzxbw       ymm2, xmmword ptr [r14 + r12 + 16]
-        vpsubw  ymm1, ymm1, ymm2
-        vpmaddwd        ymm1, ymm1, ymm1
-        vpaddd  ymm0, ymm1, ymm0
-        add     r12, 32
-        jmp     .LBB0_4
-.LBB0_7:
-        add     rsi, r11        ; rsi后移到residual部分的起始地址
-        mov     rdi, r10        ; 复习：r10是group_cnt后面不成组的residual部分的起始地址
-        test    rax, rax        ; 搞不懂这里为什么又要判断一次resi_len的大小，感觉可以去掉？
-        jne     .LBB0_10
-.LBB0_9:
-        vpxor   xmm0, xmm0, xmm0
-        jmp     .LBB0_16
-.LBB0_12:
-        ; 2x循环展开处理residual前的准备工作
-        mov     rdx, rax
-        and     rdx, -2             ; -2的补码是0b11...110，这里的操作相当于向下对齐到最近的2的倍数
-        vpxor   xmm0, xmm0, xmm0
-.LBB0_13:
-        ; 2x循环展开处理residual
-        vpmovzxbw       ymm1, xmmword ptr [rdi]
-        vpmovzxbw       ymm2, xmmword ptr [rsi]
-        vpsubw  ymm1, ymm1, ymm2
-        vpmaddwd        ymm1, ymm1, ymm1
-        vpaddd  ymm0, ymm1, ymm0
-        vpmovzxbw       ymm1, xmmword ptr [rdi + 16]
-        vpmovzxbw       ymm2, xmmword ptr [rsi + 16]
-        vpsubw  ymm1, ymm1, ymm2
-        vpmaddwd        ymm1, ymm1, ymm1
-        vpaddd  ymm0, ymm1, ymm0
-        add     rdi, 32
-        add     rsi, 32
-        add     rdx, -2
-        jne     .LBB0_13
-.LBB0_14:
-        ; 尝试处理结尾的单个__m128i
-        test    al, 1       ; 如果al&1==0，即可以被2整除的话
-        je      .LBB0_16    ; 就直接跳到结尾
-        vpmovzxbw       ymm1, xmmword ptr [rdi]
-        vpmovzxbw       ymm2, xmmword ptr [rsi]
-        vpsubw  ymm1, ymm1, ymm2
-        vpmaddwd        ymm1, ymm1, ymm1
-        vpaddd  ymm0, ymm1, ymm0
-.LBB0_16:
-        ; 收尾工作，准备函数返回
-        vpmovzxdq       ymm1, xmm0
-        vextracti128    xmm0, ymm0, 1
-        vpmovzxdq       ymm0, xmm0
-        vpaddq  ymm0, ymm1, ymm0
-        vextracti128    xmm1, ymm0, 1
-        vpaddq  xmm0, xmm0, xmm1
-        vpshufd xmm1, xmm0, 238
-        vpaddq  xmm0, xmm0, xmm1
-        vmovq   rax, xmm0
-        add     rax, rcx
-        pop     rbx
-        pop     r12
-        pop     r14
-        pop     r15
-        vzeroupper
-        ret
-```
-
-还记得那个巨大的魔法数1143949488658808833吗，它的作用是用乘法和位运算来实现整数除。
-
-记$n=33025*16$，如果我们需要计算$a/n, a \le 2^{63}-1$。只需要找到这样一个$s$来放大分子分母，以使得整数乘法搭配按位右移的精度可以达到模拟整数除法的要求。用公式表示便是：
-
-$$\forall a \le 2^{63}-1, \lvert \frac{a}{n} - \frac{a \cdot \mathrm{round}(2^s / n)}{2^s} \rvert \lt \frac{1}{2}$$
-
-这里clang和gcc都选择了$s=79$，也就是$2^{79}/1143949488658808833 \approx 528400$。需要注意的是，mul指令会将高64位的结果放在rdx寄存器，低64位放在rax寄存器，因此`shr rdx, 15`其实等效于将乘法的结果右移了15+64位。
-
-v4版本的执行时间如下：
-
-gcc
-
-```log
- Performance counter stats for './gcc/minicase-v4':
-
-            700.74 msec task-clock                       #    1.000 CPUs utilized             
-                 0      context-switches                 #    0.000 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.497 M/sec                     
-     3,153,257,995      cycles                           #    4.500 GHz                       
-       641,459,746      stalled-cycles-frontend          #   20.34% frontend cycles idle      
-     5,491,092,163      instructions                     #    1.74  insn per cycle            
-                                                  #    0.12  stalled cycles per insn   
-       888,158,656      branches                         #    1.267 G/sec                     
-         2,385,160      branch-misses                    #    0.27% of all branches           
-
-       0.700922038 seconds time elapsed
-
-       0.182989000 seconds user
-       0.517969000 seconds sys
-```
-
-clang
-
-```log
- Performance counter stats for './clang/minicase-v4':
-
-            689.72 msec task-clock                       #    1.000 CPUs utilized             
-                 1      context-switches                 #    1.450 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.520 M/sec                     
-     3,103,660,300      cycles                           #    4.500 GHz                       
-       635,350,340      stalled-cycles-frontend          #   20.47% frontend cycles idle      
-     5,212,856,511      instructions                     #    1.68  insn per cycle            
-                                                  #    0.12  stalled cycles per insn   
-       886,595,796      branches                         #    1.285 G/sec                     
-         2,379,553      branch-misses                    #    0.27% of all branches           
-
-       0.689924576 seconds time elapsed
-
-       0.195984000 seconds user
-       0.493961000 seconds sys
-```
-
-v4将分支数减少了约10%，性能有微小提升，不过基本可以忽略不计了。
-
-### v5 - 循环展开
-
-在v4中我们注意到clang自动生成了两处2x循环展开。因此我们可以考虑手动循环展开以进一步提高性能。
+下面使用手动循环展开进一步提高性能。
 
 ```cpp
 #include <array>
@@ -719,19 +521,13 @@ uint64_t sqrdiff(const uint8_t* lhs, const uint8_t* rhs, size_t len) noexcept
     constexpr size_t step = sizeof(__m128i) / sizeof(uint8_t);
     constexpr size_t u8max = std::numeric_limits<uint8_t>::max();
     constexpr size_t u32max = std::numeric_limits<uint32_t>::max();
-    // 做8x循环展开
     constexpr size_t unroll = 8;
-    constexpr size_t group_len = (u32max / (u8max * u8max * 2)) * unroll;
-    const size_t group_cnt = m128_cnt / group_len;
-    // 还有`nogroup_len`个`__m128i`不成组
-    const size_t nogroup_len = m128_cnt - group_cnt * group_len;
-    // 将它们打包成`nogroup_unroll_cnt`个长`unroll`的小组以执行循环展开
-    const size_t nogroup_unroll_cnt = nogroup_len / unroll;
-    // 剩下`resi_cnt`个`__m128i`无法做向量展开，单独处理
-    const size_t resi_cnt = nogroup_len - nogroup_unroll_cnt * unroll;
+    constexpr size_t group_len = u32max / (u8max * u8max * 2) * unroll;
+    const size_t unroll_cnt = m128_cnt / unroll;
+    // 还有`nounroll_cnt`个`__m128i`不成组
+    const size_t nounroll_cnt = m128_cnt - unroll_cnt * unroll;
 
     uint64_t sqr_diff_acc = 0;
-    // 使用独立的累加器
     std::array<__m256i, unroll> u32sqr_diff_acc{};
 
     auto dump_unit = [&](const __m256i u8l, const __m256i u8r, const size_t i) mutable {
@@ -740,34 +536,16 @@ uint64_t sqrdiff(const uint8_t* lhs, const uint8_t* rhs, size_t len) noexcept
         u32sqr_diff_acc[i] = _mm256_add_epi32(u32sqr_diff_acc[i], u32sqr_diff);
     };
 
-    auto dump_u32sqr_diff_acc = [&]() mutable {
-        for (size_t i = 0; i < unroll; i++) {
-            __m256i u64sqr_diff_acc_p0 = _mm256_cvtepu32_epi64(_mm256_extractf128_si256(u32sqr_diff_acc[i], 0));
-            __m256i u64sqr_diff_acc_p1 = _mm256_cvtepu32_epi64(_mm256_extractf128_si256(u32sqr_diff_acc[i], 1));
-            __m256i u64sqr_diff_acc = _mm256_add_epi64(u64sqr_diff_acc_p0, u64sqr_diff_acc_p1);
-            auto* tmp = (uint64_t*)&u64sqr_diff_acc;
-            sqr_diff_acc += (tmp[0] + tmp[1] + tmp[2] + tmp[3]);
-        }
+    auto dump_u32sqr_diff_acc = [&](const size_t i) mutable {
+        __m256i u64sqr_diff_acc_p0 = _mm256_cvtepu32_epi64(_mm256_extractf128_si256(u32sqr_diff_acc[i], 0));
+        __m256i u64sqr_diff_acc_p1 = _mm256_cvtepu32_epi64(_mm256_extractf128_si256(u32sqr_diff_acc[i], 1));
+        __m256i u64sqr_diff_acc = _mm256_add_epi64(u64sqr_diff_acc_p0, u64sqr_diff_acc_p1);
+        auto* tmp = (uint64_t*)&u64sqr_diff_acc;
+        sqr_diff_acc += (tmp[0] + tmp[1] + tmp[2] + tmp[3]);
     };
 
-    for (size_t igroup = 0; igroup < group_cnt; igroup++) {
-        for (size_t i = 0; i < (group_len / unroll); i++) {
-            for (size_t j = 0; j < unroll; j++) {
-                const __m256i u8l = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)lhs_cursor));
-                const __m256i u8r = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)rhs_cursor));
-                dump_unit(u8l, u8r, j);
-                lhs_cursor += step;
-                rhs_cursor += step;
-            }
-        }
-
-        dump_u32sqr_diff_acc();
-        for (size_t j = 0; j < unroll; j++) {
-            u32sqr_diff_acc[j] = _mm256_setzero_si256();
-        }
-    }
-
-    for (size_t i = 0; i < nogroup_unroll_cnt; i++) {
+    size_t count = 0;
+    for (size_t i = 0; i < unroll_cnt; i++) {
         for (size_t j = 0; j < unroll; j++) {
             const __m256i u8l = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)lhs_cursor));
             const __m256i u8r = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)rhs_cursor));
@@ -775,69 +553,83 @@ uint64_t sqrdiff(const uint8_t* lhs, const uint8_t* rhs, size_t len) noexcept
             lhs_cursor += step;
             rhs_cursor += step;
         }
+        count++;
+
+        if (count == group_len) [[unlikely]] {
+            for (size_t j = 0; j < unroll; j++) {
+                dump_u32sqr_diff_acc(j);
+                u32sqr_diff_acc[j] = _mm256_setzero_si256();
+            }
+            count = 0;
+        }
     }
 
-    for (size_t i = 0; i < resi_cnt; i++) {
+    dump_u32sqr_diff_acc(0);
+    u32sqr_diff_acc[0] = _mm256_setzero_si256();
+
+    for (size_t i = 0; i < nounroll_cnt; i++) {
         const __m256i u8l = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)lhs_cursor));
         const __m256i u8r = _mm256_cvtepu8_epi16(_mm_load_si128((__m128i*)rhs_cursor));
-        dump_unit(u8l, u8r, i);
+        dump_unit(u8l, u8r, 0);
         lhs_cursor += step;
         rhs_cursor += step;
     }
 
-    dump_u32sqr_diff_acc();
+    for (size_t j = 0; j < unroll; j++) {
+        dump_u32sqr_diff_acc(j);
+    }
 
     return sqr_diff_acc;
 }
 ```
 
-v5的性能表现如下：
+v4的性能表现如下：
 
 gcc
 
 ```log
- Performance counter stats for './gcc/minicase-v5':
+ Performance counter stats for './gcc/minicase-v4':
 
-            670.61 msec task-clock                       #    1.000 CPUs utilized             
-                 4      context-switches                 #    5.965 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.564 M/sec                     
-     3,017,593,452      cycles                           #    4.500 GHz                       
-       633,550,760      stalled-cycles-frontend          #   21.00% frontend cycles idle      
-     5,175,065,818      instructions                     #    1.71  insn per cycle            
+            681.10 msec task-clock                       #    1.000 CPUs utilized             
+                 2      context-switches                 #    2.936 /sec                      
+                 2      cpu-migrations                   #    2.936 /sec                      
+         1,048,705      page-faults                      #    1.540 M/sec                     
+     3,064,939,989      cycles                           #    4.500 GHz                       
+       630,948,088      stalled-cycles-frontend          #   20.59% frontend cycles idle      
+     5,251,876,822      instructions                     #    1.71  insn per cycle            
                                                   #    0.12  stalled cycles per insn   
-       771,170,437      branches                         #    1.150 G/sec                     
-         2,318,819      branch-misses                    #    0.30% of all branches           
+       791,899,979      branches                         #    1.163 G/sec                     
+         2,397,838      branch-misses                    #    0.30% of all branches           
 
-       0.670819307 seconds time elapsed
+       0.681312237 seconds time elapsed
 
-       0.166203000 seconds user
-       0.504618000 seconds sys
+       0.183080000 seconds user
+       0.498218000 seconds sys
 ```
 
 clang
 
 ```log
- Performance counter stats for './clang/minicase-v5':
+ Performance counter stats for './clang/minicase-v4':
 
-            678.38 msec task-clock                       #    1.000 CPUs utilized             
-                 1      context-switches                 #    1.474 /sec                      
-                 0      cpu-migrations                   #    0.000 /sec                      
-         1,048,704      page-faults                      #    1.546 M/sec                     
-     3,052,595,529      cycles                           #    4.500 GHz                       
-       645,160,486      stalled-cycles-frontend          #   21.13% frontend cycles idle      
-     4,997,264,098      instructions                     #    1.64  insn per cycle            
-                                                  #    0.13  stalled cycles per insn   
-       769,661,725      branches                         #    1.135 G/sec                     
-         2,319,870      branch-misses                    #    0.30% of all branches           
+            674.71 msec task-clock                       #    1.000 CPUs utilized             
+                 3      context-switches                 #    4.446 /sec                      
+                 1      cpu-migrations                   #    1.482 /sec                      
+         1,048,704      page-faults                      #    1.554 M/sec                     
+     3,036,197,988      cycles                           #    4.500 GHz                       
+       629,450,363      stalled-cycles-frontend          #   20.73% frontend cycles idle      
+     5,121,711,337      instructions                     #    1.69  insn per cycle            
+                                                  #    0.12  stalled cycles per insn   
+       789,771,090      branches                         #    1.171 G/sec                     
+         2,336,245      branch-misses                    #    0.30% of all branches           
 
-       0.678572887 seconds time elapsed
+       0.674943834 seconds time elapsed
 
-       0.162143000 seconds user
-       0.516455000 seconds sys
+       0.186978000 seconds user
+       0.487943000 seconds sys
 ```
 
-虽然分支数进一步减少，但错误分支计数并没有下降太多。如果是生产应用建议优化到v3就差不多了，v4和v5的阅读和维护难度相比收益而言不太成正比。
+虽然分支数进一步减少，但错误分支计数并没有下降太多。
 
 ### v1 - 自动向量化
 
@@ -979,7 +771,7 @@ cmp     rcx, rax                                    ; 判断是否结束循环
 jne     .LBB0_5
 ```
 
-可以看到，当`acc`为uint32时，clang非常聪明地用上了vpmaddwd来优化乘加运算。然而，由于clang不知道输入数据的规模通常远大于4个xmmword的长度（64字节），因此并没有采用加载xmmword的激进方法，仅使用了加载qword的保守方法。此外，我们的v5版本的优化方案事实上参考了这里clang生成的汇编，包括4x循环展开，以及使用四个独立的累加器这两项优化。其中，独立的累加器可以避免过早地合并结果（术语叫规约，Reduce），减少数据依赖导致的流水线停顿。
+可以看到，当`acc`为uint32时，clang非常聪明地用上了vpmaddwd来优化乘加运算。然而，由于clang不知道输入数据的规模通常远大于4个xmmword的长度（64字节），因此并没有采用加载xmmword的激进方法，仅使用了加载qword的保守方法。此外，我们的v4版本的优化方案事实上参考了这里clang生成的汇编，包括4x循环展开，以及使用四个独立的累加器这两项优化。其中，独立的累加器可以避免过早地合并结果（Reduce），减少数据依赖导致的流水线停顿。
 
 ## 更多思考
 
@@ -1066,3 +858,7 @@ gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大�
 另外，在标量处理部分，gcc做了一个匪夷所思的循环展开，每个小执行块的后面都跟了一个分支跳转指令，这大幅膨胀了代码体积，而带来的性能收益，对于普遍巨大的数据长度而言十分有限。
 
 那么，我们是否能提示编译器：“输入的`len`一般非常大”，来“诱导”优化呢？很遗憾，截止定稿的时候gcc和clang都不会对诸如`__builtin_expect(len >= 8192, true);`的提示作出任何反应。只能期待一下后续某位编译器高手的PR了。
+
+## 向ffmpeg提交patch
+
+TODO
