@@ -743,35 +743,7 @@ sqrdiff(unsigned char const*, unsigned char const*, unsigned long):
 
 相较我们在v3中的手写实现，由于需要直接累加到uint64，缺少uint32作为中继，编译器在累加部分额外使用了大量指令用来将uint32x4扩展为uint64x4。
 
-该版本与ffmpeg实现的主要区别在于，v1中的`acc`的数据类型是uint64，而ffmpeg中的`acc`的数据类型是uint32。将`acc`的数据类型改成uint32后，编译出的求差值平方和的部分如下所示：
-
-```nasm
-vpmovzxbw       xmm4, qword ptr [rdi + rax]         ; 这里做了个4x循环展开
-vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
-vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
-vpmovzxbw       xmm7, qword ptr [rdi + rax + 24]
-vpmovzxbw       xmm8, qword ptr [rsi + rax]
-vpsubw  xmm4, xmm4, xmm8
-vpmovzxbw       xmm8, qword ptr [rsi + rax + 8]
-vpsubw  xmm5, xmm5, xmm8
-vpmovzxbw       xmm8, qword ptr [rsi + rax + 16]
-vpmovzxbw       xmm9, qword ptr [rsi + rax + 24]
-vpsubw  xmm6, xmm6, xmm8
-vpsubw  xmm7, xmm7, xmm9                            ; 减法部分到此结束
-vpmaddwd        xmm4, xmm4, xmm4                    ; 使用madd指令做乘加
-vpaddd  ymm0, ymm4, ymm0
-vpmaddwd        xmm4, xmm5, xmm5
-vpaddd  ymm1, ymm4, ymm1
-vpmaddwd        xmm4, xmm6, xmm6
-vpaddd  ymm2, ymm4, ymm2
-vpmaddwd        xmm4, xmm7, xmm7
-vpaddd  ymm3, ymm4, ymm3
-add     rax, 32                                     ; 步进32字节
-cmp     rcx, rax                                    ; 判断是否结束循环
-jne     .LBB0_5
-```
-
-可以看到，当`acc`为uint32时，clang非常聪明地用上了vpmaddwd来优化乘加运算。然而，由于clang不知道输入数据的规模通常远大于4个xmmword的长度（64字节），因此并没有采用加载xmmword的激进方法，仅使用了加载qword的保守方法。此外，我们的v4版本的优化方案事实上参考了这里clang生成的汇编，包括4x循环展开，以及使用四个独立的累加器这两项优化。其中，独立的累加器可以避免过早地合并结果（Reduce），减少数据依赖导致的流水线停顿。
+此外，我们的v4版本的优化方案事实上参考了这里clang生成的汇编，包括循环展开，以及使用四个独立的累加器这两项优化。其中，独立的累加器可以避免过早地合并结果（Reduce），减少数据依赖导致的流水线停顿。
 
 ## 更多思考
 
@@ -853,12 +825,138 @@ Index     0123456789
 
 ### 为什么gcc编译出的main-v1性能更好？
 
-gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大区别就是，gcc使用vmovdqu一次性加载32个uint8，而clang使用vpmovzxbd分四次读取共计16个uint8进行处理。当输入的首地址未按32字节对齐时，vmovdqu的性能会相当糟糕。但凑巧的是，本人实现的yuv读取会将首地址统统对齐到常见的cache line宽度，也就是64字节，这正巧导致采用一次性ymmword加载的gcc版本性能略优于clang版本（前者126.484ms对比后者130.703ms）。至于gcc版本的汇编分析这里就不赘述了，感兴趣的读者可以在Complier Explorer自行对比。
+gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大区别就是，gcc使用vmovdqu一次性加载32个uint8，而clang使用vpmovzxbd分四次读取共计16个uint8进行处理。当输入的首地址未按32字节对齐时，vmovdqu的性能会相当糟糕。但凑巧的是，本人实现的yuv读取会将首地址统统对齐到常见的cache line宽度，也就是64字节，这正巧导致采用一次性ymmword加载的gcc版本性能略优于clang版本（前者127.500ms对比后者131.563ms）。至于gcc版本的汇编分析这里就不赘述了，感兴趣的读者可以在Complier Explorer自行对比。
 
 另外，在标量处理部分，gcc做了一个匪夷所思的循环展开，每个小执行块的后面都跟了一个分支跳转指令，这大幅膨胀了代码体积，而带来的性能收益，对于普遍巨大的数据长度而言十分有限。
 
 那么，我们是否能提示编译器：“输入的`len`一般非常大”，来“诱导”优化呢？很遗憾，截止定稿的时候gcc和clang都不会对诸如`__builtin_expect(len >= 8192, true);`的提示作出任何反应。只能期待一下后续某位编译器高手的PR了。
 
 ## 向ffmpeg提交patch
+
+在ffmpeg中，核心的SSE（Sum of Squared Error，累加均方误差）计算函数是`sse_line_8bit`。
+
+我们的v1版本与ffmpeg实现的主要区别在于，v1中的`acc`的数据类型是uint64，而ffmpeg中的`acc`的数据类型是uint32。将`acc`的数据类型改成uint32后，编译出的求差值平方和的部分如下所示：
+
+```nasm
+vpmovzxbw       xmm4, qword ptr [rdi + rax]         ; 这里做了个4x循环展开
+vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
+vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
+vpmovzxbw       xmm7, qword ptr [rdi + rax + 24]
+vpmovzxbw       xmm8, qword ptr [rsi + rax]
+vpsubw  xmm4, xmm4, xmm8
+vpmovzxbw       xmm8, qword ptr [rsi + rax + 8]
+vpsubw  xmm5, xmm5, xmm8
+vpmovzxbw       xmm8, qword ptr [rsi + rax + 16]
+vpmovzxbw       xmm9, qword ptr [rsi + rax + 24]
+vpsubw  xmm6, xmm6, xmm8
+vpsubw  xmm7, xmm7, xmm9                            ; 减法部分到此结束
+vpmaddwd        xmm4, xmm4, xmm4                    ; 使用madd指令做乘加
+vpaddd  ymm0, ymm4, ymm0
+vpmaddwd        xmm4, xmm5, xmm5
+vpaddd  ymm1, ymm4, ymm1
+vpmaddwd        xmm4, xmm6, xmm6
+vpaddd  ymm2, ymm4, ymm2
+vpmaddwd        xmm4, xmm7, xmm7
+vpaddd  ymm3, ymm4, ymm3
+add     rax, 32                                     ; 步进32字节
+cmp     rcx, rax                                    ; 判断是否结束循环
+jne     .LBB0_5
+```
+
+可以看到，当`acc`为uint32时，clang也使用了vpmaddwd来优化乘加运算。然而，由于clang不知道输入数据的规模通常远大于4个xmmword的长度（64字节），因此并没有采用加载xmmword的激进方法，仅使用了加载qword的保守方法。
+
+此处还存在一个问题，vpmaddwd使用的目标操作数是xmm（128位），而在累加时vpaddd却使用了256位宽的ymm，这是为什么？
+
+由于下一个步骤需要魔改汇编，因此我们需要先给`sse_line_8bit`补一个生成随机数据的环境。
+
+```c
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+
+void randbytes(uint8_t *buffer, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        buffer[i] = rand() & 0xFF;
+    }
+}
+
+uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int outw) {
+    int j;
+    unsigned m2 = 0;
+
+    for (j = 0; j < outw; j++) {
+        unsigned error = main_line[j] - ref_line[j];
+
+        m2 += error * error;
+    }
+
+    return m2;
+}
+
+int main() {
+    srand(37);
+
+    const int size = 2048;
+
+    void *buffer = malloc(size * 2);
+    if (buffer == NULL) {
+        return -1;
+    }
+
+    randbytes(buffer, size * 2);
+
+    const uint8_t *main_line = (uint8_t *) buffer;
+    const uint8_t *ref_line = main_line + size;
+    const uint64_t sse = sse_line_8bit(main_line, ref_line, size);
+
+    free(buffer);
+
+    printf("%llu", sse);
+}
+```
+
+使用`-O3 -mavx2`编译选项生成汇编，并找到关键循环节：
+
+```nasm
+.LBB1_4:
+        ; 这里开始作差和取平方
+        vpmovzxbw       xmm4, qword ptr [rdi + rax]
+        vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
+        vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
+        vpmovzxbw       xmm7, qword ptr [rdi + rax + 24]
+        vpmovzxbw       xmm8, qword ptr [rsi + rax]
+        vpsubw  xmm4, xmm4, xmm8
+        vpmovzxbw       xmm8, qword ptr [rsi + rax + 8]
+        vpsubw  xmm5, xmm5, xmm8
+        vpmovzxbw       xmm8, qword ptr [rsi + rax + 16]
+        vpmovzxbw       xmm9, qword ptr [rsi + rax + 24]
+        vpsubw  xmm6, xmm6, xmm8
+        vpsubw  xmm7, xmm7, xmm9
+        vpmaddwd        xmm4, xmm4, xmm4
+        vpaddd  ymm0, ymm4, ymm0
+        vpmaddwd        xmm4, xmm5, xmm5
+        vpaddd  ymm1, ymm4, ymm1
+        vpmaddwd        xmm4, xmm6, xmm6
+        vpaddd  ymm2, ymm4, ymm2
+        vpmaddwd        xmm4, xmm7, xmm7
+        vpaddd  ymm3, ymm4, ymm3
+        ; 下面判断是否退出循环
+        add     rax, 32
+        cmp     rdx, rax
+        jne     .LBB1_4
+        ; 下面将四个累加器ymm0~3中的结果归集到eax中
+        vpaddd  ymm0, ymm1, ymm0
+        vpaddd  ymm0, ymm2, ymm0
+        vpaddd  ymm0, ymm3, ymm0
+        vextracti128    xmm1, ymm0, 1
+        vpaddd  xmm0, xmm0, xmm1
+        vpshufd xmm1, xmm0, 238
+        vpaddd  xmm0, xmm0, xmm1
+        vpshufd xmm1, xmm0, 85
+        vpaddd  xmm0, xmm0, xmm1
+        vmovd   eax, xmm0
+        cmp     edx, ecx
+        je      .LBB1_7
+```
 
 TODO
