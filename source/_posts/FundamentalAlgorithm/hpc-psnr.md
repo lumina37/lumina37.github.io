@@ -16,7 +16,7 @@ PSNR有一套非常简单的算法，以它作为入门SIMD（Single Instruction
 - 如何使用perf工具的PMU（Performance Monitor Unit）统计功能来分析实际执行过程，进而明确性能提升的来源。
 - 如何使用llvm-mca分析汇编执行方案。
 
-最终，通过引入madd和循环展开，我们的实现相较ffmpeg加快了33倍（仅统计用户态耗时）。
+最终，通过引入madd指令以及循环展开，我们的实现相较ffmpeg加快了42倍（仅统计用户态耗时）。
 
 ## PSNR简介
 
@@ -135,7 +135,7 @@ rm "$TEMP_FILE" "$TEMP_FILE.tmp"
 └─tests       // minicase-v_.cpp 用于性能测试
 ```
 
-下面讲解一下泛型的实现细节，`psnr::PsnrOp<T>`是一个模板类。任何定义了静态成员函数`mse(const Tv* lhs, const Tv* rhs, const size_t len) -> uint64_t`的类型`T`，都可以嵌入`psnr::PsnrOp`中作为MSE的具体实现。通过切换不同的`T`，我们可以方便地实现在不同版本（v1~4）的MSE实现之间的切换。毕竟，说是优化PSNR，其实也就是在优化MSE，因为PSNR计算的热点毫无疑问就在MSE计算。
+源码中的`psnr::PsnrOp<T>`是一个模板类。任何定义了静态成员函数`mse(const Tv* lhs, const Tv* rhs, const size_t len) -> uint64_t`的类型`T`，都可以嵌入`psnr::PsnrOp`中作为MSE的具体实现。通过切换不同的`T`，我们可以方便地实现在不同版本（v1~4）的MSE实现之间的切换。毕竟说是优化PSNR，其实也就是在优化MSE，因为PSNR计算的热点毫无疑问就在MSE计算。
 
 ### Docker搭建调试环境
 
@@ -629,7 +629,7 @@ clang
        0.487943000 seconds sys
 ```
 
-虽然分支数进一步减少，但错误分支计数并没有下降太多。
+虽然分支数进一步减少，但错误分支计数并没有下降太多，因此性能提升并不显著。
 
 ### v1 - 自动向量化
 
@@ -831,7 +831,7 @@ gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大�
 
 那么，我们是否能提示编译器：“输入的`len`一般非常大”，来“诱导”优化呢？很遗憾，截止定稿的时候gcc和clang都不会对诸如`__builtin_expect(len >= 8192, true);`的提示作出任何反应。只能期待一下后续某位编译器高手的PR了。
 
-## 向ffmpeg提交patch
+## 深入研究自动SIMD优化中的寄存器宽度问题
 
 在ffmpeg中，核心的SSE（Sum of Squared Error，累加均方误差）计算函数是`sse_line_8bit`。
 
@@ -896,7 +896,7 @@ uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int ou
 int main() {
     srand(37);
 
-    const int size = 2048;
+    const int size = 4096;
 
     void *buffer = malloc(size * 2);
     if (buffer == NULL) {
@@ -911,15 +911,30 @@ int main() {
 
     free(buffer);
 
-    printf("%llu", sse);
+    printf("%lu\n", sse);
 }
 ```
 
-使用`-O3 -mavx2`编译选项生成汇编，并找到关键循环节：
+编译并运行：
+
+```shell
+clang sse.c -O3 -mavx2 -o sse-auto
+./sse-auto
+```
+
+期望输出为`45530600`。
+
+使用以下指令生成汇编
+
+```shell
+clang sse.c -O3 -mavx2 -S -masm=intel -o sse-noymm.S
+```
+
+找到关键循环节：
 
 ```nasm
 .LBB1_4:
-        ; 这里开始作差和取平方
+        ; 这里开始作差+取平方
         vpmovzxbw       xmm4, qword ptr [rdi + rax]
         vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
         vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
@@ -959,4 +974,93 @@ int main() {
         je      .LBB1_7
 ```
 
-TODO
+首先验证一个初步猜想，即vpaddd并不需要使用ymm寄存器的高128位，魔改后的汇编代码如下：
+
+```nasm
+.LBB1_4:
+        ; 这里开始作差+取平方
+        vpmovzxbw       xmm4, qword ptr [rdi + rax]
+        vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
+        vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
+        vpmovzxbw       xmm7, qword ptr [rdi + rax + 24]
+        vpmovzxbw       xmm8, qword ptr [rsi + rax]
+        vpsubw  xmm4, xmm4, xmm8
+        vpmovzxbw       xmm8, qword ptr [rsi + rax + 8]
+        vpsubw  xmm5, xmm5, xmm8
+        vpmovzxbw       xmm8, qword ptr [rsi + rax + 16]
+        vpmovzxbw       xmm9, qword ptr [rsi + rax + 24]
+        vpsubw  xmm6, xmm6, xmm8
+        vpsubw  xmm7, xmm7, xmm9
+        vpmaddwd        xmm4, xmm4, xmm4
+        vpaddd  xmm0, xmm4, xmm0
+        vpmaddwd        xmm4, xmm5, xmm5
+        vpaddd  xmm1, xmm4, xmm1
+        vpmaddwd        xmm4, xmm6, xmm6
+        vpaddd  xmm2, xmm4, xmm2
+        vpmaddwd        xmm4, xmm7, xmm7
+        vpaddd  xmm3, xmm4, xmm3
+        ; 下面判断是否退出循环
+        add     rax, 32
+        cmp     rdx, rax
+        jne     .LBB1_4
+        ; 下面将四个累加器xmm0~3中的结果归集到eax中
+        vpshufd xmm1, xmm0, 238
+        vpaddd  xmm0, xmm0, xmm1
+        vpshufd xmm1, xmm0, 85
+        vpaddd  xmm0, xmm0, xmm1
+        vmovd   eax, xmm0
+        cmp     edx, ecx
+        je      .LBB1_7
+```
+
+编译魔改后的汇编代码：
+
+```shell
+clang sse-noymm.S -o sse-noymm
+./sse-noymm
+```
+
+输出为`45530600`，与先前结果一致，说明这里确实不需要使用ymm。
+
+再验证一次性加载128位的方法。因为我懒，不想改循环条件，就把循环展开的次数缩减了一半。
+
+```nasm
+.LBB1_4:
+        ; 这里开始作差+取平方
+        vpmovzxbw       ymm4, xmmword ptr [rdi + rax]
+        vpmovzxbw       ymm5, xmmword ptr [rdi + rax + 16]
+        vpmovzxbw       ymm8, xmmword ptr [rsi + rax]
+        vpsubw  ymm4, ymm4, ymm8
+        vpmovzxbw       ymm8, xmmword ptr [rsi + rax + 16]
+        vpsubw  ymm5, ymm5, ymm8
+        vpmaddwd        ymm4, ymm4, ymm4
+        vpaddd  ymm0, ymm4, ymm0
+        vpmaddwd        ymm4, ymm5, ymm5
+        vpaddd  ymm1, ymm4, ymm1
+        ; 下面判断是否退出循环
+        add     rax, 32
+        cmp     rdx, rax
+        jne     .LBB1_4
+        ; 下面将累加器ymm0和ymm1中的结果归集到eax中
+        vpaddd  ymm0, ymm1, ymm0
+        vextracti128    xmm1, ymm0, 1
+        vpaddd  xmm0, xmm0, xmm1
+        vpshufd xmm1, xmm0, 238
+        vpaddd  xmm0, xmm0, xmm1
+        vpshufd xmm1, xmm0, 85
+        vpaddd  xmm0, xmm0, xmm1
+        vmovd   eax, xmm0
+        cmp     edx, ecx
+        je      .LBB1_7
+```
+
+编译魔改后的汇编代码：
+
+```shell
+clang sse-allymm.S -o sse-allymm
+./sse-allymm
+```
+
+输出为`45530600`，还是与先前结果一致。
+
+小结一下，使用qword加载并使用xmm作为累加器是一种方案，使用xmmword加载并使用ymm作为累加器是一种方案，clang却偏偏使用了这么一种qword加载+使用ymm作为累加器的别扭方案。
