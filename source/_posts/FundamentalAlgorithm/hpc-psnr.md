@@ -502,6 +502,15 @@ clang
        0.486484000 seconds sys
 ```
 
+在AVX VNNI指令集中引入了一个vpdpwssd指令作为vpmaddwd和vpaddd的融合版本，其延迟和吞吐量均与vpmaddwd一致。如果使用vpdpwssd指令，则`dump_unit`还可以进一步简化为：
+
+```nasm
+vpsubw    ymm1, ymm1, ymm2
+vpdpwssd  ymm0, ymm1, ymm1
+```
+
+不过很可惜支持这一指令集的CPU范围十分有限，因此我这里就不做benchmark了。
+
 ### v4 - 循环展开
 
 下面使用手动循环展开进一步提高性能。
@@ -831,43 +840,32 @@ gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大�
 
 那么，我们是否能提示编译器：“输入的`len`一般非常大”，来“诱导”优化呢？很遗憾，截止定稿的时候gcc和clang都不会对诸如`__builtin_expect(len >= 8192, true);`的提示作出任何反应。只能期待一下后续某位编译器高手的PR了。
 
-## 深入研究自动SIMD优化中的寄存器宽度问题
+## 深入研究Clang对ffmpeg实现的优化问题
 
-在ffmpeg中，核心的SSE（Sum of Squared Error，累加均方误差）计算函数是`sse_line_8bit`。
+### 发现问题
 
-我们的v1版本与ffmpeg实现的主要区别在于，v1中的`acc`的数据类型是uint64，而ffmpeg中的`acc`的数据类型是uint32。将`acc`的数据类型改成uint32后，编译出的求差值平方和的部分如下所示：
+在ffmpeg中，核心的SSE（Sum of Squared Error，累加均方误差）计算函数是一个短短数行的`sse_line_8bit`。
 
-```nasm
-vpmovzxbw       xmm4, qword ptr [rdi + rax]         ; 这里做了个4x循环展开
-vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
-vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
-vpmovzxbw       xmm7, qword ptr [rdi + rax + 24]
-vpmovzxbw       xmm8, qword ptr [rsi + rax]
-vpsubw  xmm4, xmm4, xmm8
-vpmovzxbw       xmm8, qword ptr [rsi + rax + 8]
-vpsubw  xmm5, xmm5, xmm8
-vpmovzxbw       xmm8, qword ptr [rsi + rax + 16]
-vpmovzxbw       xmm9, qword ptr [rsi + rax + 24]
-vpsubw  xmm6, xmm6, xmm8
-vpsubw  xmm7, xmm7, xmm9                            ; 减法部分到此结束
-vpmaddwd        xmm4, xmm4, xmm4                    ; 使用madd指令做乘加
-vpaddd  ymm0, ymm4, ymm0
-vpmaddwd        xmm4, xmm5, xmm5
-vpaddd  ymm1, ymm4, ymm1
-vpmaddwd        xmm4, xmm6, xmm6
-vpaddd  ymm2, ymm4, ymm2
-vpmaddwd        xmm4, xmm7, xmm7
-vpaddd  ymm3, ymm4, ymm3
-add     rax, 32                                     ; 步进32字节
-cmp     rcx, rax                                    ; 判断是否结束循环
-jne     .LBB0_5
+```c
+uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int outw) {
+    int j;
+    unsigned m2 = 0;
+
+    for (j = 0; j < outw; j++) {
+        unsigned error = main_line[j] - ref_line[j];
+
+        m2 += error * error;
+    }
+
+    return m2;
+}
 ```
 
-可以看到，当`acc`为uint32时，clang也使用了vpmaddwd来优化乘加运算。然而，由于clang不知道输入数据的规模通常远大于4个xmmword的长度（64字节），因此并没有采用加载xmmword的激进方法，仅使用了加载qword的保守方法。
+我们的v1版本与ffmpeg实现的主要区别在于，v1中的`acc`的数据类型是uint64，而ffmpeg中的`acc`的数据类型是uint32。将`acc`的数据类型改成uint32后，编译出的求差值平方和的部分就与ffmpeg实现一致了。
 
-此处还存在一个问题，vpmaddwd使用的目标操作数是xmm（128位），而在累加时vpaddd却使用了256位宽的ymm，这是为什么？
+此外，不论`error`的数据类型是`uint32_t`还是`int16_t`都不会影响编译结果。编译器前端在生成LLVM IR时会自行分析需要的中间变量类型。
 
-由于下一个步骤需要魔改汇编，因此我们需要先给`sse_line_8bit`补一个生成随机数据的环境。
+由于下一个步骤需要魔改汇编，因此我们需要先给`sse_line_8bit`补一个生成输入数据的环境。
 
 ```c
 #include <stdlib.h>
@@ -880,7 +878,7 @@ void randbytes(uint8_t *buffer, size_t size) {
     }
 }
 
-uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int outw) {
+__attribute__((noinline)) uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int outw) {
     int j;
     unsigned m2 = 0;
 
@@ -924,17 +922,17 @@ clang sse.c -O3 -mavx2 -o sse-auto
 
 期望输出为`45530600`。
 
-使用以下指令生成汇编
+使用以下指令生成汇编：
 
 ```shell
 clang sse.c -O3 -mavx2 -S -masm=intel -o sse-noymm.S
 ```
 
-找到关键循环节：
+找到关键循环节如下：
 
 ```nasm
 .LBB1_4:
-        ; 这里开始作差+取平方
+        ; 这里开始作差+取平方（用了一个4x循环展开）
         vpmovzxbw       xmm4, qword ptr [rdi + rax]
         vpmovzxbw       xmm5, qword ptr [rdi + rax + 8]
         vpmovzxbw       xmm6, qword ptr [rdi + rax + 16]
@@ -974,7 +972,19 @@ clang sse.c -O3 -mavx2 -S -masm=intel -o sse-noymm.S
         je      .LBB1_7
 ```
 
-首先验证一个初步猜想，即vpaddd并不需要使用ymm寄存器的高128位，魔改后的汇编代码如下：
+可以看到，当`m2`（对应我们的v1中的`acc`）为uint32时，clang也使用了vpmaddwd来优化乘加运算。
+
+然而，对比我们手动实现的优化，这里Clang的自动优化存在三个问题：
+
+1. vpmaddwd的目标操作数是xmm，也就是仅产生了低128位的有效数据，而在累加阶段，vpaddd却使用了256位宽的ymm，为什么要把高128位的无效数据纳入计算？
+2. 为什么不在作差（vpsubw）和自乘（vpmaddwd）部分使用ymm寄存器？
+3. 在加载数据时为什么只使用64位宽的qword加载而不使用128位宽的xmmword加载？
+
+### 初步验证问题1和2的改进可行性
+
+在深入LLVM的内部实现之前，我们首先通过两个简单的实验来验证问题1和2确实存在改进的可行性。
+
+首先验证vpaddd并不需要使用ymm寄存器的高128位，魔改后的汇编代码如下：
 
 ```nasm
 .LBB1_4:
@@ -1004,6 +1014,9 @@ clang sse.c -O3 -mavx2 -S -masm=intel -o sse-noymm.S
         cmp     rdx, rax
         jne     .LBB1_4
         ; 下面将四个累加器xmm0~3中的结果归集到eax中
+        vpaddd  xmm0, xmm1, xmm0
+        vpaddd  xmm0, xmm2, xmm0
+        vpaddd  xmm0, xmm3, xmm0
         vpshufd xmm1, xmm0, 238
         vpaddd  xmm0, xmm0, xmm1
         vpshufd xmm1, xmm0, 85
@@ -1020,9 +1033,9 @@ clang sse-noymm.S -o sse-noymm
 ./sse-noymm
 ```
 
-输出为`45530600`，与先前结果一致，说明这里确实不需要使用ymm。
+输出为`45530600`，与先前结果一致，说明这里的ymm的高128位确实没有意义。
 
-再验证一次性加载128位的方法。因为我懒，不想改循环条件，就把循环展开的次数缩减了一半。
+再验证一次性加载128位的方法确实可行。因为我懒，不想改循环条件，就把循环展开的次数缩减了一半。
 
 ```nasm
 .LBB1_4:
@@ -1061,6 +1074,100 @@ clang sse-allymm.S -o sse-allymm
 ./sse-allymm
 ```
 
-输出为`45530600`，还是与先前结果一致。
+输出为`45530600`，还是与先前结果一致，说明一次性加载128位后续再用ymm操作也是可以的。
 
-小结一下，使用qword加载并使用xmm作为累加器是一种方案，使用xmmword加载并使用ymm作为累加器是一种方案，clang却偏偏使用了这么一种qword加载+使用ymm作为累加器的别扭方案。
+小结一下，使用qword加载并使用xmm作为累加器是一种方案，使用xmmword加载并使用ymm作为累加器是一种方案，clang却偏偏使用了这么一种qword加载+使用ymm作为累加器的别扭方案。这到底是为什么呢？
+
+### 排查各优化步骤
+
+下面开始详细排查各个优化步骤。在Compiler Explorer中打开LLVM的Opt. Pipeline视图。通过逐个查看diff可以发现，Partial Reduction这个步骤最为关键。
+
+Partial Reduction执行前的LLVM IR大致如下：
+
+```llvm
+vector.body:
+  ; 变量加载
+  ...
+  ; 作差
+  %16 = sub nsw <8 x i32> %4, %12
+  %17 = sub nsw <8 x i32> %5, %13
+  %18 = sub nsw <8 x i32> %6, %14
+  %19 = sub nsw <8 x i32> %7, %15
+  ; 自乘
+  %20 = mul nsw <8 x i32> %16, %16
+  %21 = mul nsw <8 x i32> %17, %17
+  %22 = mul nsw <8 x i32> %18, %18
+  %23 = mul nsw <8 x i32> %19, %19
+  ; 累加
+  %24 = add <8 x i32> %20, %vec.phi
+  %25 = add <8 x i32> %21, %vec.phi14
+  %26 = add <8 x i32> %22, %vec.phi15
+  %27 = add <8 x i32> %23, %vec.phi16
+  ; 循环条件判断
+  ...
+```
+
+这里我省略了一些变量加载和循环条件判断的细节。在Partial Reduction之后，自乘部分的实现发生了巨大变化，以下是Partial Reduction后的LLVM IR：
+
+```
+vector.body:
+  ; 变量加载
+  ...
+  ; 作差
+  %8 = sub nsw <8 x i32> %0, %4
+  %9 = sub nsw <8 x i32> %1, %5
+  %10 = sub nsw <8 x i32> %2, %6
+  %11 = sub nsw <8 x i32> %3, %7
+  ; 自乘
+  %12 = mul <8 x i32> %8, %8
+  %13 = shufflevector <8 x i32> %12, <8 x i32> %12, <4 x i32> <i32 0, i32 2, i32 4, i32 6>
+  %14 = shufflevector <8 x i32> %12, <8 x i32> %12, <4 x i32> <i32 1, i32 3, i32 5, i32 7>
+  %15 = add <4 x i32> %13, %14
+  %16 = shufflevector <4 x i32> %15, <4 x i32> zeroinitializer, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+  %17 = mul <8 x i32> %9, %9
+  %18 = shufflevector <8 x i32> %17, <8 x i32> %17, <4 x i32> <i32 0, i32 2, i32 4, i32 6>
+  %19 = shufflevector <8 x i32> %17, <8 x i32> %17, <4 x i32> <i32 1, i32 3, i32 5, i32 7>
+  %20 = add <4 x i32> %18, %19
+  %21 = shufflevector <4 x i32> %20, <4 x i32> zeroinitializer, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+  %22 = mul <8 x i32> %10, %10
+  %23 = shufflevector <8 x i32> %22, <8 x i32> %22, <4 x i32> <i32 0, i32 2, i32 4, i32 6>
+  %24 = shufflevector <8 x i32> %22, <8 x i32> %22, <4 x i32> <i32 1, i32 3, i32 5, i32 7>
+  %25 = add <4 x i32> %23, %24
+  %26 = shufflevector <4 x i32> %25, <4 x i32> zeroinitializer, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+  %27 = mul <8 x i32> %11, %11
+  %28 = shufflevector <8 x i32> %27, <8 x i32> %27, <4 x i32> <i32 0, i32 2, i32 4, i32 6>
+  %29 = shufflevector <8 x i32> %27, <8 x i32> %27, <4 x i32> <i32 1, i32 3, i32 5, i32 7>
+  %30 = add <4 x i32> %28, %29
+  %31 = shufflevector <4 x i32> %30, <4 x i32> zeroinitializer, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+  ; 累加
+  %32 = add <8 x i32> %16, %vec.phi
+  %33 = add <8 x i32> %21, %vec.phi14
+  %34 = add <8 x i32> %26, %vec.phi15
+  %35 = add <8 x i32> %31, %vec.phi16
+  ; 循环条件判断
+  ...
+```
+
+其中，自乘部分的各个单元片段都将在后续的isel步骤中被替换为vpmaddwd指令。
+
+单元片段详解如下：
+
+```llvm
+%12 = mul <8 x i32> %8, %8
+%13 = shufflevector <8 x i32> %12, <8 x i32> %12, <4 x i32> <i32 0, i32 2, i32 4, i32 6>
+%14 = shufflevector <8 x i32> %12, <8 x i32> %12, <4 x i32> <i32 1, i32 3, i32 5, i32 7>
+%15 = add <4 x i32> %13, %14
+%16 = shufflevector <4 x i32> %15, <4 x i32> zeroinitializer, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+```
+
+如果`mul <8 x i32> %8, %8`的输出是`[0,1,2,3,4,5,6,7]`，那么`%13`是所有的偶数位即`[0,2,4,6]`，`%14`是奇数位。`%13`与`%14`加和后的`%15`是`[0+1,2+3,...]`。最后由一个`shufflevector`将`[0+1,2+3,...]`的高128位全部补零，扩展为`[0+1,2+3,4+5,6+7,0,0,0,0]`。
+
+这一步莫名其妙的Partial Reduction使得累加阶段虽然在名义上使用了ymm寄存器，但实际只有低128位（`4 x i32`）中的数据才是有效数据。至于作差时为何不用ymm，我认为这是由于LLVM知道值域局限在i16的范围内，用xmm对应的`<8 x i16>`即可，不需要真的用上LLVM IR中的`<8 x i32>`。
+
+### Partial Reduction的触发条件
+
+TODO
+
+### TODO：LLVM内部实现优化
+
+那么，如何优化汇编生成的质量呢？
