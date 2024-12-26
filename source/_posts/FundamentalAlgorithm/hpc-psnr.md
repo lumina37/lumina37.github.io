@@ -840,7 +840,7 @@ gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大�
 
 那么，我们是否能提示编译器：“输入的`len`一般非常大”，来“诱导”优化呢？很遗憾，截止定稿的时候gcc和clang都不会对诸如`__builtin_expect(len >= 8192, true);`的提示作出任何反应。只能期待一下后续某位编译器高手的PR了。
 
-## 深入研究Clang对ffmpeg实现的优化问题
+## 深入研究clang对ffmpeg实现的优化问题
 
 ### 发现问题
 
@@ -974,7 +974,7 @@ clang sse.c -O3 -mavx2 -S -masm=intel -o sse-noymm.S
 
 可以看到，当`m2`（对应我们的v1中的`acc`）为uint32时，clang也使用了vpmaddwd来优化乘加运算。
 
-然而，对比我们手动实现的优化，这里Clang的自动优化存在三个问题：
+然而，对比我们手动实现的优化，这里clang的自动优化存在三个问题：
 
 1. vpmaddwd的目标操作数是xmm，也就是仅产生了低128位的有效数据，而在累加阶段，vpaddd却使用了256位宽的ymm，为什么要把高128位的无效数据纳入计算？
 2. 为什么不在作差（vpsubw）和自乘（vpmaddwd）部分使用ymm寄存器？
@@ -1078,11 +1078,11 @@ clang sse-allymm.S -o sse-allymm
 
 小结一下，使用qword加载并使用xmm作为累加器是一种方案，使用xmmword加载并使用ymm作为累加器是一种方案，clang却偏偏使用了这么一种qword加载+使用ymm作为累加器的别扭方案。这到底是为什么呢？
 
-### 排查各优化步骤
+### 排查各优化步骤（分锅大会）
 
-下面开始详细排查各个优化步骤。在Compiler Explorer中打开LLVM的Opt. Pipeline视图。通过逐个查看diff可以发现，Partial Reduction这个步骤最为关键。
+下面开始详细排查各个优化步骤。在Compiler Explorer中打开LLVM的Optimization Pipeline视图。通过逐个查看diff可以发现，虽然Partial Reduction拉了最大的一坨，但其实拉下最关键一坨的关键先生还是Unroll Loop。可以说如果没有Unroll Loop的那一坨，Partial Reduction甚至不会起作用。
 
-Partial Reduction执行前的LLVM IR大致如下：
+我们还是先来看看Partial Reduction的作用，其执行前的LLVM IR大致如下：
 
 ```llvm
 vector.body:
@@ -1164,10 +1164,12 @@ vector.body:
 
 这一步莫名其妙的Partial Reduction使得累加阶段虽然在名义上使用了ymm寄存器，但实际只有低128位（`4 x i32`）中的数据才是有效数据。至于作差时为何不用ymm，我认为这是由于LLVM知道值域局限在i16的范围内，用xmm对应的`<8 x i16>`即可，不需要真的用上LLVM IR中的`<8 x i32>`。
 
-### Partial Reduction的触发条件
+### 分锅大会
 
-TODO
+虽然看上去Partial Reduction拉了最大的一坨，但其实拉下最关键一坨的关键先生还是Unroll Loop。它在作差-自乘-累加的三个阶段都使用了`8 x i32`作为向量表示。
 
-### TODO：LLVM内部实现优化
+TODO：Unroll Loop的实现实在太复杂了，后面再看
+
+### TODO：循环展开的实现优化
 
 那么，如何优化汇编生成的质量呢？
