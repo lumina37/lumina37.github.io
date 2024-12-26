@@ -1170,8 +1170,8 @@ vector.body:
 
 ### 分锅大会
 
-虽然看上去Partial Reduction拉了最大的一坨，但其实拉下最关键一坨的关键先生还是Unroll Loop，它在作差-自乘-累加的三个阶段都使用了`8 x i32`作为向量表示。如果没有Unroll Loop图省事糊了三组`8 x i32`上去，后面都没Partial Reduction什么事了。
+虽然看上去Partial Reduction拉了最大的一坨，但其实拉下最关键一坨的关键先生还是Loop Vectorize，它在作差-自乘-累加的三个阶段都使用了`8 x i32`作为向量表示。如果没有Loop Vectorize图省事糊了三组`8 x i32`上去，后面都没Partial Reduction什么事了。
 
-TODO：Unroll Loop的实现实在太复杂了，后面再看
+TODO：Loop Vectorize的实现实在太复杂了，后面再看
 
-### TODO：循环展开的实现优化
+### TODO：循环向量化的实现优化
