@@ -7,7 +7,9 @@ mathjax: true
 
 ## 前言
 
-PSNR有一套非常简单的算法，以它作为入门SIMD（Single Instruction Multiple Data）汇编的研究对象，个人认为非常合适。性能优化离不开各种工具，而“脚手架”的搭建和性能分析过程往往不会在源代码中有所体现。这篇文章是我入门SIMD汇编的自学记录，同时也希望能给后来者做一些脚手架搭建方法上的参考。如有错漏欢迎直接PR或邮件拍砖。
+PSNR的算法非常简单，但与实际工程的距离又非常近。你可以在各种项目中看到它和它的变体。个人认为，PSNR非常适合作为入门SIMD（Single Instruction Multiple Data）汇编的研究对象。
+
+性能优化的过程离不开各种开发工具，而“开发脚手架”的搭建，以及性能分析的过程往往不会在源代码中有所体现。这篇文章是我入门SIMD汇编的自学记录，同时也希望能给后来者做一些脚手架搭建方法上的参考。如有错漏欢迎直接给我的[blog](https://lumina.icu/)提PR或给我发邮件。
 
 本文将涉及以下知识点：
 
@@ -16,17 +18,19 @@ PSNR有一套非常简单的算法，以它作为入门SIMD（Single Instruction
 - 如何使用perf工具的PMU（Performance Monitor Unit）统计功能来分析实际执行过程，进而明确性能提升的来源。
 - 如何使用llvm-mca分析汇编执行方案。
 
-最终，通过引入madd指令以及循环展开，我们的实现相较ffmpeg加快了42倍（仅统计用户态耗时）。
+最终，通过引入vpmaddwd指令以及循环展开，我们的实现相较ffmpeg加快了42倍（仅统计用户态耗时）。
 
 ## PSNR简介
 
-PSNR，峰值信噪比，全称Peak Signal-to-Noise Ratio，被广泛应用于各种相似度评估场景中。
+PSNR，峰值信噪比，全称Peak Signal-to-Noise Ratio，在图像相似度、音频相似度等等各种相似度评估场景中你都能看到它的身影。
 
-均方误差（Mean Squared Error）就是先逐项作差，再取平方，最后算各项的平均。PSNR由MSE计算而来，二者的关系如下式表示：
+PSNR与均方误差（Mean Squared Error）有很直接的关联。所谓均方误差，就是先逐项作差，再取平方，最后对序列中的各个平方项取平均。PSNR与MSE关系可以用下式表示：
 
 $$PSNR = 10 \cdot \log_{10}\left(\frac{MAX_I^2}{MSE}\right)$$
 
-其中$MAX_I$为对应数据类型的最大值（对`uint8`为255）。需要注意的是，PSNR是一个无量纲量。引入$MAX_I^2$正是为了“抹去”MSE的平方量纲。这样，不论数据类型的位宽是多少，PSNR都能提供同一尺度的相似性度量。
+其中$MAX_I$为对应数据类型的最大值（对`uint8`为255）。
+
+需要注意的是，PSNR是一个无量纲量。引入$MAX_I^2$正是为了“抹去”MSE的平方量纲。经由这个操作，不论数据类型的位宽是多少，PSNR都能提供同一尺度的相似性度量。
 
 ## 性能统计汇总
 
@@ -135,8 +139,6 @@ rm "$TEMP_FILE" "$TEMP_FILE.tmp"
 └─tests       // minicase-v_.cpp 用于性能测试
 ```
 
-源码中的`psnr::PsnrOp<T>`是一个模板类。任何定义了静态成员函数`mse(const Tv* lhs, const Tv* rhs, const size_t len) -> uint64_t`的类型`T`，都可以嵌入`psnr::PsnrOp`中作为MSE的具体实现。通过切换不同的`T`，我们可以方便地实现在不同版本（v1~4）的MSE实现之间的切换。毕竟说是优化PSNR，其实也就是在优化MSE，因为PSNR计算的热点毫无疑问就在MSE计算。
-
 ### Docker搭建调试环境
 
 推荐使用如下Dockerfile搭建调试环境：
@@ -165,7 +167,7 @@ CMD ["bash"]
 
 基线版本（v1）的实现与ffmpeg在[vf_psnr.c](https://ffmpeg.org/doxygen/4.2/vf__psnr_8c_source.html#l00083)中的实现几乎完全一致。
 
-测试数据为2GB长度的数组。minicase-v1的执行情况如下：
+测试数据为2GB长度的数组。`minicase-v1`的执行情况如下：
 
 gcc
 
@@ -408,7 +410,9 @@ clang
 
 ### v3 - 改用madd
 
-在SIMD指令集中，有一类特殊的指令可以实现先乘后加，即madd系列指令。下面使用madd来优化`dump_unit`函数。
+在SIMD指令集中，有一类特殊的指令可以实现先相乘后水平相加，即madd系列指令。下面使用`vpmaddwd`来优化`dump_unit`函数。
+
+`vpmaddwd`的输入为两个`8 x i16`向量`[0,1,2,3,4,5,6,7]`和`[8,9,10,11,12,13,14,15]`，输出为一个`4 x i32`向量`[0*8+1*9,2*10+3*11,...]`。即先逐项相乘，再水平相加。
 
 修改前的`dump_unit`：
 
@@ -452,9 +456,9 @@ vpmaddwd  ymm1, ymm1, ymm1
 vpaddd    ymm0, ymm1, ymm0
 ```
 
-补充一下，简单的指令周期数（Latency）和吞吐量倒数（RThroughput）可以在[Intel官网](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html)查询，更详细的参数可以在[uops.info](https://uops.info)查询。其中RThroughput为x的意思是每隔x个时钟周期可以发射一条指令，例如RThroughput=0.5意味着每时钟周期可以发射两条指令。
+补充一下，简单的指令周期数（Latency）和吞吐量倒数（RThroughput）可以在[Intel官网](https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html)查询，更详细的参数可以在[uops.info](https://uops.info)查询。其中`RThroughput=x`的意思是每隔x个时钟周期可以发射一条指令，例如`RThroughput=0.5`意味着每时钟周期可以发射两条指令。
 
-vpmaddwd和vpmullw的吞吐量和消耗的周期数几乎一致。修改后我们在热点循环中节省了两条unpack指令和一条add指令。
+`vpmaddwd`和`vpmullw`的吞吐量和消耗的周期数几乎一致。修改后我们在热点循环中节省了两条unpack指令和一条add指令。
 
 v3版本的执行耗时如下：
 
@@ -502,7 +506,7 @@ clang
        0.486484000 seconds sys
 ```
 
-在AVX VNNI指令集中引入了一个vpdpwssd指令作为vpmaddwd和vpaddd的融合版本，其延迟和吞吐量均与vpmaddwd一致。如果使用vpdpwssd指令，则`dump_unit`还可以进一步简化为：
+在AVX VNNI指令集中引入了一个`vpdpwssd`指令作为`vpmaddwd`和`vpaddd`的融合版本，其延迟和吞吐量均与`vpmaddwd`一致。如果使用vpdpwssd指令，则`dump_unit`还可以进一步简化为：
 
 ```nasm
 vpsubw    ymm1, ymm1, ymm2
@@ -661,7 +665,7 @@ uint64_t sqrdiff(const uint8_t* lhs, const uint8_t* rhs, size_t len) noexcept
 
 添加`-mavx2`编译选项后，gcc和clang都会生成自动向量化的汇编。
 
-其中clang19生成的汇编如下：
+其中clang v19.1.0生成的汇编如下：
 
 ```nasm
 sqrdiff(unsigned char const*, unsigned char const*, unsigned long):
@@ -750,7 +754,7 @@ sqrdiff(unsigned char const*, unsigned char const*, unsigned long):
         ret
 ```
 
-相较我们在v3中的手写实现，由于需要直接累加到uint64，缺少uint32作为中继，编译器在累加部分额外使用了大量指令用来将uint32x4扩展为uint64x4。
+相较我们在v3中的手写实现，由于需要直接累加到`uint64`，缺少`uint32`作为中继，编译器在累加部分额外使用了大量指令用来将`4 x u32`扩展为`4 x u64`。
 
 此外，我们的v4版本的优化方案事实上参考了这里clang生成的汇编，包括循环展开，以及使用四个独立的累加器这两项优化。其中，独立的累加器可以避免过早地合并结果（Reduce），减少数据依赖导致的流水线停顿。
 
@@ -830,11 +834,11 @@ Index     0123456789
 [0,1]     DeeeeeeeeER   vmovdqu	xmm1, xmmword ptr [rsi]
 ```
 
-上述结果表明，vextracti128依赖于vmovdqu的结果，并且一个周期只能发射一条vextracti128指令（RThroughput=1）；而vmovdqu不存在数据依赖，且单周期可以发射两条指令（RThroughput=0.5）。因而我们可以断定，load_2sse（连续使用两次`_mm_load_si128`）的方案效率往往更优——在需要循环展开的场景，由于vmovdqu的发射效率高于vextracti128，load_2sse的方案更占优势。在需要做“长”时间（大于等于4个时钟周期）数据处理的常见场景，load_2sse可以缩短下游指令等待数据的耗时。只有在不做循环展开且几乎不怎么处理数据的罕见应用场景下，瓶颈才会落在vmovdqu上而不是vextracti128上，此时两个方案的效率才能堪堪打成平手。
+上述结果表明，`vextracti128`依赖于`vmovdqu`的结果，并且一个周期只能发射一条`vextracti128`指令（`RThroughput=1`）；而`vmovdqu`不存在数据依赖，且单周期可以发射两条指令（`RThroughput=0.5`）。因而我们可以断定，`load_2sse`（连续使用两次`_mm_load_si128`）的方案效率往往更优——在需要循环展开的场景，由于`vmovdqu`的发射效率高于`vextracti128`，`load_2sse`的方案更占优势。在需要做“长”时间（大于等于4个时钟周期）数据处理的常见场景，`load_2sse`可以缩短下游指令等待数据的耗时。只有在不做循环展开且几乎不怎么处理数据的罕见应用场景下，瓶颈才会落在`vmovdqu`上而不是`vextracti128`上，此时两个方案的效率才能堪堪打成平手。
 
 ### 为什么gcc编译出的main-v1性能更好？
 
-gcc 14.2.0对v1版本的编译结果相较clang 19.1.0的编译结果的最大区别就是，gcc使用vmovdqu一次性加载32个uint8，而clang使用vpmovzxbd分四次读取共计16个uint8进行处理。当输入的首地址未按32字节对齐时，vmovdqu的性能会相当糟糕。但凑巧的是，本人实现的yuv读取会将首地址统统对齐到常见的cache line宽度，也就是64字节，这正巧导致采用一次性ymmword加载的gcc版本性能略优于clang版本（前者127.500ms对比后者131.563ms）。至于gcc版本的汇编分析这里就不赘述了，感兴趣的读者可以在Complier Explorer自行对比。
+gcc v14.2.0对v1版本的编译结果相较clang v19.1.0的编译结果的最大区别就是，gcc使用`vmovdqu`一次性加载32个`uint8`，而clang使用`vpmovzxbd`分四次读取共计16个`uint8`进行处理。当输入的首地址未按32字节对齐时，`vmovdqu`的性能会相当糟糕。但凑巧的是，本人实现的yuv读取会将首地址统统对齐到常见的cache line宽度，也就是64字节，这正巧导致采用一次性`ymmword`加载的gcc版本性能略优于clang版本（前者127.500ms对比后者131.563ms）。至于gcc版本的汇编分析这里就不赘述了，感兴趣的读者可以在Complier Explorer自行对比。
 
 另外，在标量处理部分，gcc做了一个匪夷所思的循环展开，每个小执行块的后面都跟了一个分支跳转指令，这大幅膨胀了代码体积，而带来的性能收益，对于普遍巨大的数据长度而言十分有限。
 
@@ -861,9 +865,9 @@ uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int ou
 }
 ```
 
-我们的v1版本与ffmpeg实现的主要区别在于，v1中的`acc`的数据类型是uint64，而ffmpeg中的`acc`的数据类型是uint32。将`acc`的数据类型改成uint32后，编译出的求差值平方和的部分就与ffmpeg实现一致了。
+我们的v1版本与ffmpeg实现的主要区别在于，v1中的`acc`的数据类型是`uint64`，而ffmpeg中的`acc`的数据类型是`uint32`。将`acc`的数据类型改成`uint32`后，编译出的求差值平方和的部分就与ffmpeg实现一致了。
 
-此外，不论`error`的数据类型是`uint32_t`还是`int16_t`都不会影响编译结果。编译器前端在生成LLVM IR时会自行分析需要的中间变量类型。
+此外，不论`error`的数据类型是`uint32`还是`int16`都不会影响编译结果。编译器前端在生成LLVM IR时会自行分析需要的中间变量类型。
 
 由于下一个步骤需要魔改汇编，因此我们需要先给`sse_line_8bit`补一个生成输入数据的环境。
 
@@ -976,9 +980,9 @@ clang sse.c -O3 -mavx2 -S -masm=intel -o sse-noymm.S
 
 然而，对比我们手动实现的优化，这里clang的自动优化存在三个问题：
 
-1. vpmaddwd的目标操作数是xmm，也就是仅产生了低128位的有效数据，而在累加阶段，vpaddd却使用了256位宽的ymm，为什么要把高128位的无效数据纳入计算？
-2. 为什么不在作差（vpsubw）和自乘（vpmaddwd）部分使用ymm寄存器？
-3. 在加载数据时为什么只使用64位宽的qword加载而不使用128位宽的xmmword加载？
+1. `vpmaddwd`的目标操作数是`xmm`，也就是仅产生了低128位的有效数据，而在累加阶段，`vpaddd`却使用了256位宽的`ymm`，为什么要把高128位的无效数据纳入计算？
+2. 为什么不在作差（`vpsubw`）和自乘（`vpmaddwd`）部分使用`ymm`寄存器？
+3. 在加载数据时为什么只使用64位宽的`qword`加载而不使用128位宽的`xmmword`加载？
 
 ### 初步验证问题1和2的改进可行性
 
@@ -1074,9 +1078,9 @@ clang sse-allymm.S -o sse-allymm
 ./sse-allymm
 ```
 
-输出为`45530600`，还是与先前结果一致，说明一次性加载128位后续再用ymm操作也是可以的。
+输出为`45530600`，还是与先前结果一致，说明一次性加载128位后续再用`ymm`操作也是可以的。
 
-小结一下，使用qword加载并使用xmm作为累加器是一种方案，使用xmmword加载并使用ymm作为累加器是一种方案，clang却偏偏使用了这么一种qword加载+使用ymm作为累加器的别扭方案。这到底是为什么呢？
+小结一下，使用`qword`加载并使用`xmm`作为累加器是一种方案，使用`xmmword`加载并使用`ymm`作为累加器是一种方案，clang却偏偏使用了这么一种`qword`加载+使用`ymm`作为累加器的别扭方案。这到底是为什么呢？
 
 ### 排查各优化步骤（分锅大会）
 
@@ -1148,7 +1152,7 @@ vector.body:
   ...
 ```
 
-其中，自乘部分的各个单元片段都将在后续的isel步骤中被替换为vpmaddwd指令。
+其中，自乘部分的各个单元片段都将在后续的isel步骤中被替换为`vpmaddwd`指令。
 
 单元片段详解如下：
 
