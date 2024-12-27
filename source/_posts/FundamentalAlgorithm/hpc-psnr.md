@@ -1168,10 +1168,10 @@ vector.body:
 
 这一步莫名其妙的Partial Reduction使得累加阶段虽然在名义上使用了ymm寄存器，但实际只有低128位（`4 x i32`）中的数据才是有效数据。至于作差时为何不用ymm，我认为这是由于LLVM知道值域局限在i16的范围内，用xmm对应的`<8 x i16>`即可，不需要真的用上LLVM IR中的`<8 x i32>`。
 
-### 分锅大会
-
-虽然看上去Partial Reduction拉了最大的一坨，但其实拉下最关键一坨的关键先生还是Loop Vectorize，它在作差-自乘-累加的三个阶段都使用了`8 x i32`作为向量表示。如果没有Loop Vectorize图省事糊了三组`8 x i32`上去，后面都没Partial Reduction什么事了。
+### Loop Vectorize解析
 
 TODO：Loop Vectorize的实现实在太复杂了，后面再看
+
+参考：https://llvm.net.cn/docs/VectorizationPlan.html
 
 ### TODO：循环向量化的实现优化
