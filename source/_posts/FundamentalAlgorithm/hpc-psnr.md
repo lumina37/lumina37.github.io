@@ -1082,11 +1082,11 @@ clang sse-allymm.S -o sse-allymm
 
 小结一下，使用`qword`加载并使用`xmm`作为累加器是一种方案，使用`xmmword`加载并使用`ymm`作为累加器是一种方案，clang却偏偏使用了这么一种`qword`加载+使用`ymm`作为累加器的别扭方案。这到底是为什么呢？
 
-### 排查各优化步骤（分锅大会）
+### 分析各优化步骤
 
-下面开始详细排查各个优化步骤。在Compiler Explorer中打开LLVM的Optimization Pipeline视图。通过逐个查看diff可以发现，虽然Partial Reduction拉了最大的一坨，但其实拉下最关键一坨的关键先生还是Unroll Loop。可以说如果没有Unroll Loop的那一坨，Partial Reduction甚至不会起作用。
+下面开始详细排查各个优化步骤。在Compiler Explorer中打开LLVM的Optimization Pipeline视图。通过逐个查看diff可以发现，Loop Vectorize（循环的向量化展开）和Partial Reduction（部分优先求和）两个环节都带来了较大的改动。但其中最重要的还是Loop Vectorize。
 
-我们还是先来看看Partial Reduction的作用，其执行前的LLVM IR大致如下：
+Loop Vectorize展开后的LLVM IR大致如下：
 
 ```llvm
 vector.body:
@@ -1166,12 +1166,29 @@ vector.body:
 
 如果`mul <8 x i32> %8, %8`的输出是`[0,1,2,3,4,5,6,7]`，那么`%13`是所有的偶数位即`[0,2,4,6]`，`%14`是奇数位。`%13`与`%14`加和后的`%15`是`[0+1,2+3,...]`。最后由一个`shufflevector`将`[0+1,2+3,...]`的高128位全部补零，扩展为`[0+1,2+3,4+5,6+7,0,0,0,0]`。
 
-这一步莫名其妙的Partial Reduction使得累加阶段虽然在名义上使用了ymm寄存器，但实际只有低128位（`4 x i32`）中的数据才是有效数据。至于作差时为何不用ymm，我认为这是由于LLVM知道值域局限在i16的范围内，用xmm对应的`<8 x i16>`即可，不需要真的用上LLVM IR中的`<8 x i32>`。
+这一步莫名其妙的Partial Reduction使得累加阶段虽然在名义上使用了ymm寄存器，但实际只有低128位（`4 x i32`）中的数据才是有效数据。
 
-### Loop Vectorize解析
+那么，这段求和还有可能优化吗？我认为比较困难，不仅是因为Loop Vectorize在clang里也算是一等一复杂的优化pass，还因为在`a+=b*c`这个muladd操作中，只有当累加器`a`在后续操作中不再被其他计算使用时，才能应用madd优化。也就是下面这种情形：
 
-TODO：Loop Vectorize的实现实在太复杂了，后面再看
+```c
+uint64_t sse_line_8bit(const uint8_t *main_line, const uint8_t *ref_line, int outw) {
+    int j;
+    unsigned m2 = 0;
 
-参考：https://llvm.net.cn/docs/VectorizationPlan.html
+    for (j = 0; j < outw; j++) {
+        unsigned error = main_line[j] - ref_line[j];
 
-### TODO：循环向量化的实现优化
+        m2 += error * error;
+
+        // No other operation on `m2`!
+    }
+
+    return m2;
+}
+```
+
+由于`vpmaddwd`会将水平相邻的两个元素加和，从LLVM IR来看，循环向量化后，`error`、`error*error`以及`m2`都被展开为元素一一对应的`8 x i32`向量，但`vpmaddwd`会导致`m2`变成`4 x i64`，使其无法和后续其他的`8 x i32`向量逐元素对应。
+
+### 解决方案
+
+这里可以走两条路线，一个是向ffmpeg提交patch，这个比较简单。另一个是向clang提PR，针对在循环体中没有被重复利用的累加器采取更激进的madd优化。事实上，类似的case在向量点乘、矩阵乘等应用场景下非常常见，虽然各家应用针对这类计算密集的基础场景普遍会执行深度手动优化，但总得来说这并不算是一个很灌水的case，还是值得PR的。
