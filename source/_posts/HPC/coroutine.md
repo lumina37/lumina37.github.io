@@ -62,7 +62,7 @@ C++中的标准协程库采用了**无栈**设计，同时兼容非对称与对�
 
 # C++协程
 
-本章节我们将从无栈协程中各类资源的生命周期入手，对无栈协程的实现细节建立初步理解；随后学习C++20协程的标准用法和时序图，初步掌握C++20协程的工程应用；然后剥开C++协程的语法糖，巩固对底层机制的理解；最后阅读一些知名开源协程库的源码，了解行业内的最佳实践，初步掌握C++20协程的工程化应用。
+本章节我们将从无栈协程中各类资源的生命周期入手，对无栈协程的实现细节建立初步理解；随后学习C++20协程的标准用法和时序图，掌握C++20协程的基础语法；然后剥开C++协程的语法糖，巩固对底层机制的理解；最后阅读一些知名开源协程库的源码，了解行业内的最佳实践，初步掌握C++20协程的工程化应用。
 
 C++20协程是一个上手难度较高的语言特性，天生具备异步带来的复杂性，开放给用户定制的功能点也比较多，市面上有关最优实践的免费教程更是几乎没有。个人认为从资源管理出发的学习路线，虽然比从demo直接上手的路线更陡峭，但也更能避免在生命周期等疑难杂症上踩坑。最后的源码阅读与最优实践章节，更能帮助那些希望在复杂工程中应用C++20协程的同学尽快上手。
 
@@ -70,7 +70,7 @@ C++20协程是一个上手难度较高的语言特性，天生具备异步带来
 
 ## 无栈协程的实现细节
 
-下文将那些与某个无栈协程相关联的资源集合称作**协程帧**。无栈协程的本质是一个可以被多次挂起、恢复执行的状态机。这意味着，协程帧的生命周期必须独立于当前的函数调用栈帧，不能因为调用栈析构就将协程状态机一并送走。因此协程帧只能**动态分配**在堆上或其他具有较长生命周期的内存池中。协程帧中一般会保存以下信息：
+下文将那些与某个无栈协程相关联的所有资源集合称作**协程帧**。无栈协程的本质是一个可以被多次挂起、恢复执行的状态机。而协程帧中保存了一个无栈协程的所有状态。这意味着，协程帧的生命周期必须独立于当前的函数调用栈帧，不能因为调用栈析构就将协程状态机一并送走。因此协程帧只能**动态分配**在堆上或其他具有较长生命周期的内存池中。协程帧中一般会保存以下信息：
 
 1. 传入的参数。按值传入协程的参数均需要复制到协程帧内部，以保证在整个协程的生命周期内都可以访问入参。
 2. 一些协程内使用的临时变量。只有那些跨越了挂起点（一般由await挂起）的临时变量才需要持久化状态，才需要被存入协程帧。
@@ -79,7 +79,7 @@ C++20协程是一个上手难度较高的语言特性，天生具备异步带来
 
 接下来，我们将深入语言特性，学习一些C++20协程的用法。
 
-## 标准库组件
+## 标准库设施（基础）
 
 为了简化场景，这里仅展开讨论`co_await`和`co_return`，先不讨论异步生成器相关的内容。
 
@@ -161,7 +161,41 @@ C++20标准协程学习曲线陡峭，很大程度上是因为这个`promise_typ
 
 ### `std::suspend_*`
 
-TODO
+上面提到过的`std::suspend_always`和`std::suspend_never`是标准库中定义的两类特殊Awaitable，在`promise_type::initial_suspend`的返回类型处很常见。
+
+其中`std::suspend_always`的定义如下：
+
+```cpp
+class suspend_always {
+    constexpr bool await_ready() const noexcept { return true; }
+    constexpr void await_suspend( std::coroutine_handle<> ) const noexcept {}
+    constexpr void await_resume() const noexcept {}
+};
+```
+
+其中`await_ready`始终返回`true`，意味着总是需要挂起。而`await_suspend`和`await_resume`均为空操作。
+
+`std::suspend_never`与`std::suspend_always`类似，`await_suspend`和`await_resume`亦为空操作，而`await_ready`始终返回`false`，意味着不需要挂起。
+
+### `std::coroutine_handle`
+
+你可能注意到了`await_suspend`中传入的参数是`std::coroutine_handle<void>`类型，而`MyTask`中保存的成员变量类型是`std::coroutine_handle<promise_type>`类型。这两种模板实例化的区别在于，`std::coroutine_handle<void>`是`std::coroutine_handle<Promise>`在类型擦除后的泛化类型，擦除了`promise_type`相关的信息。这个设计是为了方便其他函数在看不到`promise_type`定义的情况下，依然能透过`std::coroutine_handle<void>`操纵协程。
+
+任何`std::coroutine_handle<promise_type>`都可以被静态转换为`std::coroutine_handle<void>`。
+
+通过`std::coroutine_handle<void>`我们依然能操作：
+
+1. `bool is_done = h.done();` - 检查协程是否完成
+2. `h.resume();` - 恢复协程执行
+3. `h.destroy();` - 销毁协程
+4. `bool valid = static_cast<bool>(h);` - 检查handle是否仍有效
+5. `void* ptr = h.address();` - 导出协程帧的地址
+6. `auto h = std::coroutine_handle<>::from_address(ptr);` - 将一个协程帧的地址导入为handle
+
+但通过`std::coroutine_handle<void>`不能执行与具体的`promise_type`类型相关的操作，否则会发生编译失败：
+
+1. `promise_type p = h.promise();` - 获取协程帧上的`promise_type`对象
+2. `auto h = std::coroutine_handle<>::from_promise(p);` - 从`promise_type`对象的地址反推handle的值
 
 ### 时序图
 
@@ -207,7 +241,7 @@ MyTask example() {
 int main() { example(); }
 ```
 
-近似脱去语法糖后：
+近似脱去语法糖后可以得到：
 
 ```cpp
 #include <coroutine>
@@ -367,3 +401,166 @@ int main() {
     return 0;
 }
 ```
+
+来分段看一下脱糖后的代码。前两段都是我们自定义的`MyAwaitable`和`MyTask`的定义。
+
+下面这一段代码展示了`example`协程函数的协程帧定义。注释中标注了各个字段的含义。
+
+```cpp
+struct __exampleFrame {
+    void (*resume_fn)(__exampleFrame *);  // 协程恢复执行时将调用的“回调函数”
+    void (*destroy_fn)(__exampleFrame *);  // 协程销毁时将调用的“回调函数”
+    // `promise_type`对象
+    // 其中`std::__coroutine_traits_impl<MyTask>::promise_type`用于
+    // 萃取`MyTask`中嵌套的`promise_type`类型
+    std::__coroutine_traits_impl<MyTask>::promise_type __promise;
+    int __suspend_index;  // 从何处挂起
+    bool __initial_await_suspend_called;  // `initial_suspend`是否已被调用
+    int result;  // 临时变量`result`
+    std::suspend_never __suspend_26_8;  // `initial_suspend`返回的Awaitable
+    MyAwaitable __suspend_27_27;  // `MyAwaitable`对象
+    int __suspend_27_27_res;  // `MyAwaitable`的`await_resume`的返回值
+    std::suspend_never __suspend_26_8_1;  // `final_suspend`返回的Awaitable
+};
+```
+
+`example`函数中都是一些初始化的工作。除了第一次对`resume_fn`的调用需要解释一下意义——是为了间接执行`init_suspend`的逻辑。
+
+```cpp
+MyTask example() {
+    /* 为协程帧申请内存空间 */
+    __exampleFrame *__f = reinterpret_cast<__exampleFrame *>(operator new(sizeof(__exampleFrame)));
+    __f->__suspend_index = 0;
+    __f->__initial_await_suspend_called = false;
+
+    /* 构造`promise_type` */
+    new (&__f->__promise) std::__coroutine_traits_impl<MyTask>::promise_type{};
+
+    /* 恢复和销毁回调函数的前向声明 */
+    void __exampleResume(__exampleFrame * __f);
+    void __exampleDestroy(__exampleFrame * __f);
+
+    /* 初始化回调函数指针 */
+    __f->resume_fn = &__exampleResume;
+    __f->destroy_fn = &__exampleDestroy;
+
+    /* 通过调用一次resume来间接执行`initial_suspend`逻辑 */
+    __exampleResume(__f);
+
+    /* 创建返回值 */
+    return __f->__promise.get_return_object();
+}
+```
+
+`__exampleResume`中实现了状态机在各阶段的逻辑，揭示了C++20无栈协程的核心机制。调度器会通过反复执行`__exampleResume`来推动协程状态的变化，直到协程执行完毕。
+
+```cpp
+void __exampleResume(__exampleFrame *__f) {
+    try {
+        /* Create a switch to get to the correct resume point */
+        switch (__f->__suspend_index) {
+            case 0:
+                break;
+            case 1:
+                goto __resume_example_1;
+            case 2:
+                goto __resume_example_2;
+            case 3:
+                goto __resume_example_3;
+        }
+
+        /* co_await insights.cpp:26 */
+        // 在这里执行`initial_suspend`的逻辑
+        // `initial_suspend`中的异常会被下方的catch捕获
+        // 但不会交由`unhandled_exception`处理
+        __f->__suspend_26_8 = __f->__promise.initial_suspend();
+        // 如果`initial_suspend`返回的Awaitable不需要挂起（比如`std::suspend_never`）
+        // 那么直接跳到`__resume_example_1`处继续执行
+        if (!__f->__suspend_26_8.await_ready()) {
+            __f->__suspend_26_8.await_suspend(
+                std::coroutine_handle<MyTask::promise_type>::from_address(static_cast<void *>(__f))
+                    .operator std::coroutine_handle<void>());
+            // 如果需要挂起，则将`__suspend_index`向前步进一位
+            // 下次恢复时将直接从`__resume_example_1`开始执行
+            __f->__suspend_index = 1;
+            __f->__initial_await_suspend_called = true;
+            // 返回，等待下一次恢复
+            return;
+        }
+
+    __resume_example_1:
+        // 先执行`initial_suspend`返回的Awaitable的`await_resume`
+        __f->__suspend_26_8.await_resume();
+
+        /* co_await insights.cpp:27 */
+        __f->__suspend_27_27 = MyAwaitable{};
+        // 如果`MyAwaitable{}`不需要挂起
+        // 那么直接跳到`__resume_example_2`处继续执行
+        if (!__f->__suspend_27_27.await_ready()) {
+            __f->__suspend_27_27.await_suspend(
+                std::coroutine_handle<MyTask::promise_type>::from_address(static_cast<void *>(__f))
+                    .operator std::coroutine_handle<void>());
+            // 如果需要挂起，同样将`__suspend_index`向前步进一位
+            // 下次恢复时将直接从`__resume_example_2`开始执行
+            __f->__suspend_index = 2;
+            return;
+        }
+
+    __resume_example_2:
+        // 先执行`MyAwaitable{}`的`await_resume`拿到返回值
+        __f->__suspend_27_27_res = __f->__suspend_27_27.await_resume();
+        // 返回值再赋给临时变量
+        __f->result = __f->__suspend_27_27_res;
+        /* co_return insights.cpp:28 */
+        // 到达`co_return`处，调用`return_value`
+        __f->__promise.return_value(__f->result);
+        goto __final_suspend;
+    } catch (...) {
+        if (!__f->__initial_await_suspend_called) {
+            // 不处理`initial_suspend`中的异常
+            throw;
+        }
+
+        __f->__promise.unhandled_exception();
+    }
+
+__final_suspend:
+    /* co_await insights.cpp:26 */
+    __f->__suspend_26_8_1 = __f->__promise.final_suspend();
+    // 如果`final_suspend`返回的Awaitable不需要挂起（比如`std::suspend_never`）
+    // 那么直接跳到`__resume_example_3`处开始销毁协程帧
+    if (!__f->__suspend_26_8_1.await_ready()) {
+        __f->__suspend_26_8_1.await_suspend(
+            std::coroutine_handle<MyTask::promise_type>::from_address(static_cast<void *>(__f))
+                .operator std::coroutine_handle<void>());
+        // 如果需要挂起，同样将`__suspend_index`向前步进一位
+        // 下次恢复时将直接从`__resume_example_3`开始销毁协程帧
+        __f->__suspend_index = 3;
+        return;
+    }
+
+__resume_example_3:
+    // 销毁协程帧
+    __f->destroy_fn(__f);
+}
+```
+
+## 检验学习效果
+
+到此为止，我们应该已经可以解答下面的一些问题：
+
+1. 我们为什么要使用协程？
+2. 无栈协程有哪些优劣势？
+3. 协程帧中保存了哪些信息？
+4. 一个可以被`co_await`的类型需要满足哪些特征？
+5. `await_suspend`在何时被调用？我们一般会在其中实现什么功能？
+6. `co_await ...`表达式的返回值由哪个函数给定？
+7. 协程函数的返回类型需要具备哪些特征？
+8. `std::suspend_never`可以被`co_await`吗？
+9. `std::coroutine_handle<promise_type>`和`std::coroutine_handle<void>`的区别是什么？为什么需要设计一个`std::coroutine_handle<void>`类型？
+
+参考答案将随后提供，读者可以先利用以上问题检验以下学习效果。
+
+## 标准库设施（进阶）
+
+TODO
