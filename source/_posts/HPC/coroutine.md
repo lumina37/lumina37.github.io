@@ -62,9 +62,9 @@ C++中的标准协程库采用了**无栈**设计，同时兼容非对称与对�
 
 # C++协程
 
-本章节我们将从无栈协程中各类资源的生命周期入手，对无栈协程的实现细节建立初步理解；然后学习C++20协程的标准用法、最佳实践和时序图，初步掌握C++20协程的工程应用；最后剥开C++协程的语法糖，巩固对底层机制的理解。
+本章节我们将从无栈协程中各类资源的生命周期入手，对无栈协程的实现细节建立初步理解；随后学习C++20协程的标准用法和时序图，初步掌握C++20协程的工程应用；然后剥开C++协程的语法糖，巩固对底层机制的理解；最后阅读一些知名开源协程库的源码，了解行业内的最佳实践，初步掌握C++20协程的工程化应用。
 
-协程是一个相对复杂的语言特性，开放给用户定制的功能点较多。因此，个人认为从资源管理出发的学习路线，虽然比从demo上手的路线更陡峭，但也更能避免在生命周期等疑难杂症上踩坑，更适合那些希望在复杂工程中应用C++20协程的同学。
+C++20协程是一个上手难度较高的语言特性，天生具备异步带来的复杂性，开放给用户定制的功能点也比较多，市面上有关最优实践的免费教程更是几乎没有。个人认为从资源管理出发的学习路线，虽然比从demo直接上手的路线更陡峭，但也更能避免在生命周期等疑难杂症上踩坑。最后的源码阅读与最优实践章节，更能帮助那些希望在复杂工程中应用C++20协程的同学尽快上手。
 
 推荐一个[B站视频](https://www.bilibili.com/video/BV1Cz9NYFE8E)，来自up主“程序员陈子青”。他的讲解通俗易懂，思路也是先从协程的资源管理出发，稍后再深入语言细节。本文受到了该视频的很多启发。
 
@@ -75,7 +75,7 @@ C++中的标准协程库采用了**无栈**设计，同时兼容非对称与对�
 1. 传入的参数。按值传入协程的参数均需要复制到协程帧内部，以保证在整个协程的生命周期内都可以访问入参。
 2. 一些协程内使用的临时变量。只有那些跨越了挂起点（一般由await挂起）的临时变量才需要持久化状态，才需要被存入协程帧。
 3. 挂起点的信息。用于确定下次协程恢复时需要从哪里恢复执行。
-4. 调用的子协程的协程帧地址（可选，但大部分情况下需要）。大部分情况下，如果需要从调用的子协程中获取返回值，或是控制子协程的生命周期，比如在当前协程帧析构时将子协程的协程帧一并销毁，就必须保存子协程的协程帧的地址。协程帧以类似单向链表的形式串成一串。
+4. 上下级协程的协程帧地址（可选，但大部分情况下需要）。大部分情况下，如果需要从调用的下级协程中获取返回值，或是控制下级协程的生命周期，比如在当前协程帧析构时将下级协程的协程帧一并销毁，就必须保存下级协程的协程帧地址；如果要在当前协程结束后，恢复上级协程的执行，那么当前协程帧内也必须保存上级协程的协程帧地址。这样一来，协程帧就会以类似双向链表的形式串成一串。需要注意的是，这里保存上下级协程的协程帧地址的逻辑需要开发者自行实现，编译器不会代劳。
 
 接下来，我们将深入语言特性，学习一些C++20协程的用法。
 
@@ -139,21 +139,39 @@ struct MyTask {
 };
 ```
 
-C++20标准协程学习曲线陡峭，语法复杂度饱受诟病，很大程度上是因为这个`promise_type`嵌套在`MyTask`中的结构。我认为，要理解这个结构的设计初衷，就必须结合协程帧在内存中的布局以及时序图来学习。
+C++20标准协程学习曲线陡峭，很大程度上是因为这个`promise_type`嵌套在`MyTask`中的结构。要理解这个结构的设计思路，最好结合协程帧在内存中的布局以及时序图来学习。
 
-协程帧的内存布局，我们在前文已经有了一些铺垫，回顾一下就是多个协程帧按调用顺序，以类似单向链表的形式串在一起。下面我们按照触发的时间顺序来看看，协程的执行过程会经历哪些步骤，以及`promise_type`中的这些成员函数分别在其中实现了哪些功能。协程的执行过程会经历以下步骤：
+`promise_type`的存储位置位于协程帧内。关于协程帧的内存布局，我们在前文已经有了一些铺垫。回顾一下就是多个协程帧按调用顺序，以类似双向链表的形式串在一起。同时，大部分情况下，上下级协程的handle都会保存在当前协程帧的`promise_type`中。只不过这个保存逻辑需要由开发者在他们定制的`promise_type`中实现，编译器不会代劳。
+
+下面我们按照触发的时间顺序来看看，协程的执行过程会经历哪些步骤，以及`promise_type`中的这些成员函数分别在其中实现了哪些功能。协程的执行过程会经历以下步骤：
 
 1. 为协程帧申请内存空间。
 2. 将入参拷贝到协程帧内。
-3. 在当前协程帧上`promise_type`所在的位置调用其构造函数
+3. 在当前协程帧上`promise_type`所在的位置调用其构造函数。
 4. 上层调用方的协程帧的临时变量区内，会给返回值`MyTask`预留一段空间。用户定义的`get_return_object`成员函数的返回值，将会被用于初始化这个调用方协程帧上的`MyTask`。也就是说，嵌套在`MyTask`中的`promise_type`的`get_return_object`成员函数，必须返回一个`MyTask`对象。并且用户可以在这个`get_return_object`中自定义初始化逻辑。大部分协程库都会给`MyTask`传入一个`std::coroutine_handle<promise_type>::from_promise(*this)`。注意到`promise_type`位于当前协程帧内，因此通过`std::coroutine_handle<promise_type>::from_promise(*this)`我们就能拿到指向当前协程帧的`std::coroutine_handle`。再将这个`std::coroutine_handle`传递给上层调用方，就能让上层调用方通过这个handle获取当前协程的返回值，或是控制当前协程的生命周期。
-5. 调用`initial_suspend`得到一个Awaitable，并等待这个Awaitable执行完毕。一般我们会返回一个`std::suspend_always`，说明协程立即挂起，将`std::suspend_never`，说明协程；或者
+5. 调用`initial_suspend`获取一个Awaitable，并等待这个Awaitable执行完毕。一般我们会返回一个`std::suspend_always`，说明协程将立即挂起（懒惰模式），并将执行权交还给主调度器；或是返回一个`std::suspend_never`，说明协程将立即开始执行（饥饿模式），直到遇到`co_await`语句时再挂起。
+6. （可选）如果发生了未捕获的异常，则在捕获异常后，在catch块内调用`unhandled_exception`。
+7. 到达`co_return`。如果`co_return`没有返回值，那么`return_void`将被调用；否则，如果`co_return`返回了值，那么`return_value`将被调用，传入的参数就是`co_return`返回的值。这个`return_value`的意义就是给当前协程帧一个机会来保存返回值。
+8. 析构协程中所有的临时变量，不论它们是位于协程帧（对应那些跨越了挂起点的临时变量）还是位于调用栈（对应那些没有跨越挂起点的临时变量）上。
+9. 调用`final_suspend`获取一个Awaitable，并等待这个Awaitable执行完毕。一般我们会返回一个特殊的Awaitable。这个特殊的Awaitable中保存了上层协程的handle，用于恢复上层协程的执行。而这个上层协程的handle的来源，正是当前协程的协程帧的`promise_type`中保存的那个上层协程handle。
+10. 调用`promise_type`的析构函数。
+11. 调用各个协程入参的析构函数。
+12. 释放协程帧的内存空间。
+13. 将执行权返还给主调度器。
 
-协程调用的时序图如下图所示：
+### `std::suspend_*`
 
 TODO
 
+### 时序图
+
+协程调用的时序图如下图所示：
+
+<img src="https://cdn.jsdelivr.net/gh/lumina37/picx-images-hosting@master/2507_blog_coroutine/00-timeline.webp" alt="协程时间轴（来自B站视频BV1Cz9NYFE8E）"/>
+
 ## 剥语法糖
+
+下面，我们将针对下面这个简单demo，使用[C++ Insights](https://cppinsights.io/)来获取近似脱去协程语法糖后的代码，以此巩固对底层机制的理解。
 
 ```cpp
 #include <coroutine>
@@ -187,4 +205,165 @@ MyTask example() {
 }
 
 int main() { example(); }
+```
+
+近似脱去语法糖后：
+
+```cpp
+#include <coroutine>
+
+struct MyAwaitable {
+    inline bool await_ready() const noexcept { return false; }
+
+    inline void await_suspend(std::coroutine_handle<void> handle) const { handle.resume(); }
+
+    inline int await_resume() const noexcept { return 42; }
+};
+
+struct MyTask {
+    struct promise_type {
+        inline MyTask get_return_object() { return MyTask{std::coroutine_handle<promise_type>::from_promise(*this)}; }
+
+        inline std::suspend_never initial_suspend() noexcept { return {}; }
+
+        inline std::suspend_never final_suspend() noexcept { return {}; }
+
+        inline void return_value(int v) {}
+
+        inline void unhandled_exception() {}
+
+        // inline constexpr promise_type() noexcept = default;
+    };
+
+    std::coroutine_handle<promise_type> handle_;
+    inline MyTask(std::coroutine_handle<promise_type> h) : handle_{std::coroutine_handle<promise_type>(h)} {}
+
+    inline ~MyTask() noexcept {
+        if (this->handle_.operator bool()) {
+            this->handle_.destroy();
+        }
+    }
+};
+
+struct __exampleFrame {
+    void (*resume_fn)(__exampleFrame *);
+    void (*destroy_fn)(__exampleFrame *);
+    std::__coroutine_traits_impl<MyTask>::promise_type __promise;
+    int __suspend_index;
+    bool __initial_await_suspend_called;
+    int result;
+    std::suspend_never __suspend_26_8;
+    MyAwaitable __suspend_27_27;
+    int __suspend_27_27_res;
+    std::suspend_never __suspend_26_8_1;
+};
+
+MyTask example() {
+    /* Allocate the frame including the promise */
+    /* Note: The actual parameter new is __builtin_coro_size */
+    __exampleFrame *__f = reinterpret_cast<__exampleFrame *>(operator new(sizeof(__exampleFrame)));
+    __f->__suspend_index = 0;
+    __f->__initial_await_suspend_called = false;
+
+    /* Construct the promise. */
+    new (&__f->__promise) std::__coroutine_traits_impl<MyTask>::promise_type{};
+
+    /* Forward declare the resume and destroy function. */
+    void __exampleResume(__exampleFrame * __f);
+    void __exampleDestroy(__exampleFrame * __f);
+
+    /* Assign the resume and destroy function pointers. */
+    __f->resume_fn = &__exampleResume;
+    __f->destroy_fn = &__exampleDestroy;
+
+    /* Call the made up function with the coroutine body for initial suspend.
+       This function will be called subsequently by coroutine_handle<>::resume()
+       which calls __builtin_coro_resume(__handle_) */
+    __exampleResume(__f);
+
+    return __f->__promise.get_return_object();
+}
+
+/* This function invoked by coroutine_handle<>::resume() */
+void __exampleResume(__exampleFrame *__f) {
+    try {
+        /* Create a switch to get to the correct resume point */
+        switch (__f->__suspend_index) {
+            case 0:
+                break;
+            case 1:
+                goto __resume_example_1;
+            case 2:
+                goto __resume_example_2;
+            case 3:
+                goto __resume_example_3;
+        }
+
+        /* co_await insights.cpp:26 */
+        __f->__suspend_26_8 = __f->__promise.initial_suspend();
+        if (!__f->__suspend_26_8.await_ready()) {
+            __f->__suspend_26_8.await_suspend(
+                std::coroutine_handle<MyTask::promise_type>::from_address(static_cast<void *>(__f))
+                    .operator std::coroutine_handle<void>());
+            __f->__suspend_index = 1;
+            __f->__initial_await_suspend_called = true;
+            return;
+        }
+
+    __resume_example_1:
+        __f->__suspend_26_8.await_resume();
+
+        /* co_await insights.cpp:27 */
+        __f->__suspend_27_27 = MyAwaitable{};
+        if (!__f->__suspend_27_27.await_ready()) {
+            __f->__suspend_27_27.await_suspend(
+                std::coroutine_handle<MyTask::promise_type>::from_address(static_cast<void *>(__f))
+                    .operator std::coroutine_handle<void>());
+            __f->__suspend_index = 2;
+            return;
+        }
+
+    __resume_example_2:
+        __f->__suspend_27_27_res = __f->__suspend_27_27.await_resume();
+        __f->result = __f->__suspend_27_27_res;
+        /* co_return insights.cpp:28 */
+        __f->__promise.return_value(__f->result);
+        goto __final_suspend;
+    } catch (...) {
+        if (!__f->__initial_await_suspend_called) {
+            throw;
+        }
+
+        __f->__promise.unhandled_exception();
+    }
+
+__final_suspend:
+
+    /* co_await insights.cpp:26 */
+    __f->__suspend_26_8_1 = __f->__promise.final_suspend();
+    if (!__f->__suspend_26_8_1.await_ready()) {
+        __f->__suspend_26_8_1.await_suspend(
+            std::coroutine_handle<MyTask::promise_type>::from_address(static_cast<void *>(__f))
+                .operator std::coroutine_handle<void>());
+        __f->__suspend_index = 3;
+        return;
+    }
+
+__resume_example_3:
+    __f->destroy_fn(__f);
+}
+
+/* This function invoked by coroutine_handle<>::destroy() */
+void __exampleDestroy(__exampleFrame *__f) {
+    /* destroy all variables with dtors */
+    __f->~__exampleFrame();
+    /* Deallocating the coroutine frame */
+    /* Note: The actual argument to delete is __builtin_coro_frame with the promise as parameter */
+    operator delete(static_cast<void *>(__f), sizeof(__exampleFrame));
+}
+
+int main() {
+    example();
+    return 0;
+}
 ```
