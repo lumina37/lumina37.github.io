@@ -481,7 +481,7 @@ MyTask example() {
     __f->__suspend_index = 0;
     __f->__initial_await_suspend_called = false;
 
-    /* 构造`promise_type` */
+    /* placement new构造`promise_type` */
     new (&__f->__promise) std::__coroutine_traits_impl<MyTask>::promise_type{};
 
     /* 恢复和销毁回调函数的前向声明 */
@@ -616,8 +616,37 @@ __resume_example_3:
 
 ### 利用`await_suspend`恢复上层协程
 
-在返回`void`时，`await_suspend`会在执行完毕后挂起，并将控制权返回给主调度器。
+在返回`void`时，`await_suspend`会在执行完毕后挂起，并将执行权返回给主调度器。
 
-除了返回`void`，`await_suspend`还可以返回`bool`。
+除了返回`void`，`await_suspend`还可以返回`bool`。当`await_suspend`返回`true`时，表明需要阻塞，需要将执行权返回给主调度器；当其返回`false`时，表明不需要阻塞，直接转到`await_resume`执行。
 
-TODO
+此外，`await_suspend`可以通过返回另一个协程的`std::coroutine_handle`来恢复对应协程的执行。这个功能被普遍用于恢复上层协程执行。以[jbaldwin/libcoro](https://github.com/jbaldwin/libcoro)这个库为例——在当前协程的`await_suspend`中，拿到当前协程的handle之后，将这个handle填入下层协程的`m_continuation`字段中。
+
+```cpp
+auto await_suspend(std::coroutine_handle<> awaiting_coroutine) noexcept -> std::coroutine_handle<>
+{
+    m_coroutine.promise().continuation(awaiting_coroutine);  // 在这里设置了m_continuation
+    return m_coroutine;
+}
+```
+
+还记得我们上面提到的`final_suspend`的作用吗？在下层协程的`final_suspend`中，我们会返回一个Awaitable。这个Awaitable中携带了上层协程的handle。在这个Awaitable的`await_suspend`中，我们就会返回这个上层协程的handle，用于恢复上层协程的执行：
+
+```cpp
+template<typename promise_type>
+auto await_suspend(std::coroutine_handle<promise_type> coroutine) noexcept -> std::coroutine_handle<>
+{
+    auto& promise = coroutine.promise();
+    if (promise.m_continuation != nullptr)
+    {
+        return promise.m_continuation;  // 在这里恢复上层协程
+    }
+    else
+    {
+        return std::noop_coroutine();
+    }
+}
+```
+
+### Awaitable与Awaiter的概念辨析
+
