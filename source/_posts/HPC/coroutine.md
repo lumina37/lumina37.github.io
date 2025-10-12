@@ -1,6 +1,6 @@
 ---
 title: C++20协程标准库，从入门到了解
-categories: HPC
+categories: hpc
 date: 2025/7/21 13:29:00
 mathjax: true
 ---

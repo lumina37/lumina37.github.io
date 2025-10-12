@@ -1,6 +1,6 @@
 ---
 title: PSNR的SIMD优化
-categories: FundamentalAlgorithm
+categories: hpc
 date: 2024/11/20 19:49:00
 mathjax: true
 ---
