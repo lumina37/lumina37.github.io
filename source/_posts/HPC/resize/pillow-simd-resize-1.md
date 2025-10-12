@@ -1,6 +1,6 @@
 ---
 title: 【高性能图像缩放】 Pillow-SIMD resize [1]
-categories: FundamentalAlgorithm
+categories: hpc
 date: 2024/3/15 10:10:00
 mathjax: true
 ---
