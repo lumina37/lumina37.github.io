@@ -7,9 +7,13 @@ mathjax: true
 
 # 前言
 
-`torch.compile`是PyTorch 2.0的核心特性之一。作用是将那些基于PyTorch的Python代码捕获为一张静态计算图，针对这张图做一些优化以提高执行效率*。因为这个特性实在是太好上手了，而且效果还凑合，所以作者就以这篇关于`torch.compile`的文章的撰写作为对ai图编译的一个入门。
+`torch.compile`是PyTorch 2.0的核心特性之一。
 
-*更具体地说，`torch.compile`会将静态图融合为一个或多个kernel，也可能进一步转换为CUDA Graph，通过减少kernel调度与执行的overhead以及一些内存布局上的优化来提高执行效率。其中kernel调度问题一般指的是Python的执行效率，以及一些kernel发射的CPU overhead；kernel执行问题一般指的是对global memory的一些不必要的读取写回。
+compile这个词源自古拉丁语com-pilāre。com-意为共同，-pilāre意为搜刮，收集。合起来的意思是把零散的东西地毯式地，不遗漏地搜刮，收集到一起。后面衍生出编纂、汇编的含义。可以作为类比的是C++的汇编含义——C++编译器会无遗漏地搜集用户给定的C++代码碎片，在不改变其语义的前提下，将高级语言转换为机器语言的形式。而`torch.compile`的功能则是无遗漏地收集Python代码，在不改变其原有语义的前提下，将其转换为一个更高效的形式。
+
+更具体地说，`torch.compile`的作用是将那些基于PyTorch的Python代码捕获为一张静态计算图，针对这张图做一些优化以提高执行效率*。因为这个特性实在是太好上手了，而且效果还凑合，所以作者就以这篇关于`torch.compile`的文章的撰写作为对ai编译的一个入门。
+
+*更更具体地说，`torch.compile`会将静态图融合为一个或多个kernel，也可能进一步转换为CUDA Graph，通过减少kernel调度执行的overhead、减少一些不必要的global memory读写以及一些内存布局上的优化来提高执行效率。其中kernel调度执行问题一般指的是Python的执行效率，以及一些kernel发射的CPU overhead。
 
 ## 前置阅读
 
@@ -17,7 +21,17 @@ mathjax: true
 
 看完上面这篇入门的，对下面这篇文章的接受度可能更高一点。
 
-[理解torch.compile基本原理和使用方式](https://zhuanlan.zhihu.com/p/12712224407)：相较上篇文章额外讲解了一点点**最佳实践**和**编译缓存机制**相关的内容。
+[torch.compile 技术剖析：PyTorch 2.x 编译系统详解](https://zhuanlan.zhihu.com/p/1968068966934095005)：相较上篇文章额外讲解了非常多的细节。
+
+# 流程初探
+
+## 流程图
+
+仅考虑正向推理，不考虑反向传播，整个`torch.compile`的流程大致由以下三步组成：
+
+TorchDynamo捕获FX Graph（静态图）→TorchInductor将FX Graph转换为ATen IR→TorchInductor实施一系列计算图优化→生成Triton等IR→编译到kernel
+
+Talk is cheap，下面我们来动手搭一个demo，近距离观察`torch.compile`内部各个环节的输入输出。
 
 ## 脚手架搭建
 
@@ -52,5 +66,18 @@ explicit = true
 line-length = 120
 target-version = "py313"
 ```
+
+## 观察FX Graph
+
+目前如果要观察TorchDynamo所捕获到的FX Graph，有两种方式：
+
+1. 设置`TORCH_LOGS`环境变量为`graph`
+2. 调用`torch._logging.set_logs(graph=True)`
+
+二者效果一致。
+
+在FX Graph捕获完毕后，TorchInductor将FX Graph转换为ATen IR前，用户依然有机会插入一些自定义的模板替换操作。不过这里不做深入，还是以把握默认行为为主。
+
+## 观察ATen IR
 
 
