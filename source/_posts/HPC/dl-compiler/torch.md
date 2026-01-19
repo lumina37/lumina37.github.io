@@ -29,7 +29,7 @@ compile这个词源自古拉丁语com-pilāre。com-意为共同，-pilāre意�
 
 仅考虑正向推理，不考虑反向传播，整个`torch.compile`的流程大致由以下三步组成：
 
-TorchDynamo捕获FX Graph（静态图）→TorchInductor将FX Graph转换为ATen IR→TorchInductor实施一系列计算图优化→生成Triton等IR→编译到kernel
+TorchDynamo捕获FX Graph（静态图）→TorchInductor实施一系列计算图优化→转换为Triton等low-level IR
 
 Talk is cheap，下面我们来动手搭一个demo，近距离观察`torch.compile`内部各个环节的输入输出。
 
@@ -47,7 +47,7 @@ description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "lumina37", email = "starry.qvq@gmail.com" }]
 requires-python = ">=3.13,<3.14"
-dependencies = ["torch", "torchvision", "triton;sys_platform!='win32'", "triton-windows;sys_platform=='win32'"]
+dependencies = ["torch", "torchvision", "triton;sys_platform!='win32'", "triton-windows;sys_platform=='win32'", "depyf"]
 
 [build-system]
 requires = ["uv_build>=0.9.25,<0.10.0"]
@@ -67,17 +67,15 @@ line-length = 120
 target-version = "py313"
 ```
 
-## 观察FX Graph
+## 观察TorchDynamo捕获的FX Graph
 
 目前如果要观察TorchDynamo所捕获到的FX Graph，有两种方式：
 
-1. 设置`TORCH_LOGS`环境变量为`graph`
-2. 调用`torch._logging.set_logs(graph=True)`
+1. 设置`TORCH_LOGS`环境变量为`graph_code`
+2. 调用`torch._logging.set_logs(graph_code=True)`
 
 二者效果一致。
 
-在FX Graph捕获完毕后，TorchInductor将FX Graph转换为ATen IR前，用户依然有机会插入一些自定义的模板替换操作。不过这里不做深入，还是以把握默认行为为主。
+## 观察TorchInductor Pre-grad passes后的FX Graph
 
-## 观察ATen IR
-
-
+Pre-grad passes的核心目的是为Autograd铺路。
