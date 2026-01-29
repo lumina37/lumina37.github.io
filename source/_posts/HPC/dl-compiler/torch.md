@@ -72,10 +72,32 @@ target-version = "py313"
 目前如果要观察TorchDynamo所捕获到的FX Graph，有两种方式：
 
 1. 设置`TORCH_LOGS`环境变量为`graph_code`
-2. 调用`torch._logging.set_logs(graph_code=True)`
+1. 调用`torch._logging.set_logs(graph_code=True)`
 
 二者效果一致。
 
-## 观察TorchInductor Pre-grad passes后的FX Graph
+在FX Graph捕获完毕后，TorchInductor将FX Graph转换为Inductor IR前，用户依然有机会插入一些自定义的模板替换操作。不过最佳实践不建议在这里提前插入优化动作，从语义上说这里还处于TorchDynamo的地界，不是做优化的地方；从效果上说，此时FX Graph还没有经过Pre-grad的规范化，优化逻辑容易和传入的FX Graph中包含的各种稀奇古怪的写法产生耦合。因此这里不做深入，还是以把握默认行为为主。
 
-Pre-grad passes的核心目的是为Autograd铺路。
+## 观察TorchInductor Pre-grad Pass后的FX Graph
+
+Pre-grad Pass的核心目的是为Autograd铺路。主要包含以下步骤：
+
+1. 视图类算子的规范化
+2. 各个中间张量形状的推导
+3. padding调整以适应cuDNN所需要的一些规范化要求
+
+基本都是一些规范化相关的操作，目的是让Autograd环节的输入更纯净。
+
+要观察这一阶段的输出，比较推荐使用depyf库，因为原始的log输出的可读性实在是太差了。一般在depyf输出的xxx_BEFORE_PRE_GRAD.x.py这个文件里能看到被捕获的最初的FX Graph，在xxx.Forward_graph.x.py这个文件里能看到Pre-grad Pass的输出。
+
+## 观察TorchInductor Post-grad pass后的结果
+
+如果涉及反向图，那么在Autograd后还会有一个Joint Graph Pass和Post-grad Pass，主要包含以下步骤：
+
+1. 再一次的视图合并与消除
+2. 常量折叠
+3. 死代码消除
+4. 算子重排以更好地利用缓存
+5. Re-inplace优化，也就是将一些可以inplace的算子重新转换为inplace实现
+
+一般在depyf输出的xxx_AFTER_POST_GRAD.x.py这个文件里能看到Post-grad Pass的输出。
