@@ -9,9 +9,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      PANDOC_VERSION: 3.9.0.2
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           submodules: recursive
@@ -19,30 +22,28 @@ jobs:
       - name: Install pandoc
         # For LaTeX support
         run: |
-          wget -O pandoc.deb https://github.com/jgm/pandoc/releases/download/3.1.12.2/pandoc-3.1.12.2-1-amd64.deb
+          wget -O pandoc.deb https://github.com/jgm/pandoc/releases/download/${{ env.PANDOC_VERSION }}/pandoc-${{ env.PANDOC_VERSION }}-1-amd64.deb
           sudo dpkg -i pandoc.deb
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "latest"
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
-      - name: Cache NPM dependencies
-        uses: actions/cache@v4
+      - name: Cache dependencies
+        uses: actions/cache@v5
         with:
           path: node_modules
-          key: ${{ runner.OS }}-npm-${{ hashFiles('**/package-lock.json') }}
+          key: ${{ runner.OS }}-npm-${{ hashFiles('**/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
       - name: Install Dependencies
-        run: npm install
+        run: bun install
 
       - name: Build
-        run: npm run build
+        run: bun run build
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: ./public
 
@@ -62,4 +63,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
